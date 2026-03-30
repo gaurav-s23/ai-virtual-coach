@@ -1,0 +1,25 @@
+# Python / Backend
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+data/pdfs/*
+!data/pdfs/.gitkeep
+
+# Node / Frontend
+node_modules/
+dist/
+build/
+.eslintcache
+.stylelintcache
+
+# Logs & Debug
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS specific
+.DS_Store
+Thumbs.db
