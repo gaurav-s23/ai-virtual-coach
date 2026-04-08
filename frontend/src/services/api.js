@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_URL = "http://localhost:8000"; // Aapka FastAPI server port
+const API_URL = (import.meta?.env?.VITE_API_URL ?? "").replace(/\/$/, ""); // Build-time env for Docker/production
 
 const api = axios.create({
     baseURL: API_URL,

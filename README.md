@@ -1,190 +1,98 @@
-### 🧠 AI Virtual Coach | Neural Career Simulation Suite ###
+## AI Virtual Coach
 
-* "Engineering the bridge from Candidate → Senior Software Architect through High-Fidelity AI Simulation." *
+Full‑stack interview practice app with a FastAPI backend and a React frontend. It supports resume‑grounded interviewing (RAG), persistent interview history, and production-style backend concerns (JWT auth, migrations, rate limiting).
 
+### What’s in here
+- **Backend**: FastAPI, SQLAlchemy, Alembic, JWT auth (access + refresh), SlowAPI rate limiting
+- **RAG**: ChromaDB + local CPU embeddings via `sentence-transformers/all-MiniLM-L6-v2`
+- **LLM routing**: LiteLLM-backed fallback list (configurable via env)
+- **Frontend**: React + Vite, served via Nginx in Docker
 
+---
 
+## Quick start (Docker)
 
+### 1) Configure environment
+Create `.env` in the repo root (don’t commit it). Use `.env.example` as a template.
 
+Minimum you’ll need:
+- **`GOOGLE_API_KEY`**: used for Gemini via LiteLLM
+- **`JWT_SECRET_KEY`**: signing key for JWT access tokens
 
+### 2) Build + run
 
+```bash
+docker compose up --build
+```
 
+Open:
+- **Frontend**: `http://localhost:5173`
+- **Backend**: `http://localhost:8000`
+- **API docs**: `http://localhost:8000/docs`
 
+---
 
-## 🏛️ Project Vision
+## Backend details
 
-# ai_virtual_coach is not just another interview prep tool — it is a Recruitment War-Room Simulator.
+### Authentication
+- Password hashing uses **Argon2** (bcrypt kept for verifying legacy hashes).
+- Access token is a JWT; refresh tokens are opaque strings stored **hashed** in the DB.
 
-Designed and engineered by Gaurav Shukla, this system replicates the pressure, unpredictability, and depth of Tier-1 technical interviews using AI-driven behavioral and technical simulations.
+Auth endpoints:
+- `POST /api/auth/signup`
+- `POST /api/auth/login`
+- `POST /api/auth/refresh`
+- `GET /api/auth/me`
 
-⚔️ Fail here. Learn here. Win in real interviews.
+Legacy compatibility:
+- `POST /api/login` still exists (legacy client support) and returns tokens.
 
-## 🎯 Core Objective
-Eliminate Interview Anxiety
-Simulate Real FAANG-level interview pressure
-Train:
-🧠 Technical Depth
-🗣️ Communication Clarity
-⚡ Cognitive Speed
-Build truthful confidence, not fake preparation
-🚀 Neural Architecture (Core Pillars)
-🎙️ 1. The "8+5 Neural Pivot" — Interview Engine
+### Rate limiting
+SlowAPI is enabled by default and can be toggled via:
+- `RATELIMIT_ENABLED=true|false`
 
-A non-linear, adaptive questioning system designed to expose surface-level preparation.
+### Migrations
+This repo uses Alembic. In Docker, migrations run via the `migration` service before the backend starts.
 
+Local (from `backend/`):
 
+```bash
+alembic upgrade head
+```
 
-## 🔍 Phase Breakdown:
-Nodes 1–8 (Scanning Phase)
-Resume + JD based probing
-Mid-Point Pivot
-AI detects:
-Inconsistencies
-Overconfidence
-Fluff answers
-Nodes 9–13 (Deep Dive Phase)
-Aggressive follow-ups targeting:
-Fundamentals
-Edge cases
-Real understanding
+---
 
+## RAG (resume ingestion)
+On `POST /api/start-interview`, the backend:
+1. Loads the uploaded PDF via `PyPDFLoader`
+2. Splits it into chunks
+3. Embeds chunks using **local CPU embeddings** (`HF_EMBEDDING_MODEL`, default `sentence-transformers/all-MiniLM-L6-v2`)
+4. Stores vectors in **ChromaDB** (persisted to `./backend/.chroma` when running via Docker)
 
+---
 
+## API (most used)
+- `POST /api/start-interview` (multipart: `resume`, `jd`, `role`, `user_id`)
+- `POST /api/interview/chat` (JWT protected; persists transcript)
+- `GET /api/interview/{session_id}/history` (JWT protected)
+- `GET /api/dashboard?user_id=...` (JWT protected)
 
+---
 
-## ⚡ Features:
-Real-time answer analysis
-Adaptive difficulty escalation
-Voice-enabled interaction (Web Speech API)
-📄 2. Synthetic Mock Hub — Intelligent Test Engine
+## Configuration notes
 
-A self-healing testing system powered by AI.
+### LLM fallback list
+Set the model priority list using:
+- `LLM_FALLBACK_MODELS=...`
 
+Example:
 
+```env
+LLM_FALLBACK_MODELS=gemini/gemini-2.5-flash,gemini/gemini-2.5-pro
+```
 
-## 🧩 Capabilities:
-📥 Auto-ingests:
-Quant
-Verbal
-Reasoning PDFs
-🧠 Fail-safe AI generation:
-If PDFs fail → AI generates MCQs dynamically
-🎯 Smart UI:
-Attempted ✔️
-Flagged ⚠️
-Unseen ❓
-💡 Result:
+### HuggingFace cache
+In Docker, HF cache is mounted so embedding models don’t re-download on every run:
+- `./backend/.hf_cache:/app/.hf_cache`
 
-Zero downtime. Always ready. Always adaptive.
 
-
-
-
-
-## 🌍 3. Oral Probe Fluency — Communication Engine
-
-Transforms you into a confident English speaker for interviews.
-
-# 🎯 Features:
-AI-generated real-world scenarios:
-Conflict resolution
-System design discussions
-Behavioral questions
-📊 Live Metrics:
-Grammar Accuracy
-Vocabulary Depth
-Speech Cadence (WPM)
-Confidence Index
-
-
-
-
-## 🛠️ System Architecture
-
-Layer	Technology	Responsibility
-
-🎮 Command Deck (UI)	React 18 + Vite	Glassmorphic UI + Motion Animations
-
-⚙️ Simulation Core	FastAPI (Python)	Async request handling + API orchestration
-
-🧠 Neural Brain	Gemini 2.0 Flash	AI reasoning + content generation
-
-💾 Persistence Layer	SQLite / PostgreSQL	Session logs + analytics
-
-🎤 Audio Interface	Web Speech API	Real-time voice I/O
-🕹️ Quick Start Guide
-🔹 1. Backend Setup (Neural Gate)
-cd backend
-
-# Add your API key
-echo "GEMINI_API_KEY=your_key_here" > .env
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Run server
-uvicorn main:app --reload --port 8000
-🔹 2. Frontend Setup (HUD)
-cd frontend
-
-npm install
-npm run dev
-📊 Dashboard & Analytics
-
-Your Career Flight Recorder 📈
-
-
-
-
-📌 Features:
-🎯 Readiness Score
-Based on accuracy + communication
-🗺️ Progress Mapping
-Junior Dev → Senior Architect
-🔥 Weakness Heatmap
-Detects:
-DSA gaps
-System Design flaws
-Communication issues
-
-
-
-
-
-# 🧠 Why This Project Stands Out
-
-✅ Not just Q&A → Adaptive Interview Simulation
-✅ Not just practice → Behavior + Thinking Analysis
-✅ Not just learning → Pressure Conditioning
-
-This is not preparation.
-This is interview combat training.
-
-✒️ Lead Intelligence
-👨‍💻 Chief Architect: Gaurav Shukla
-🚀 Version: 2.5.0 — Neural Upgrade
-📜 License: MIT
-
-
-
-# 💬 Philosophy
-
-"Consistency is the only metric of growth."
-
-Run the simulation.
-Face your weaknesses.
-Upgrade yourself.
-
-
-
-# 🌟 Future Enhancements (Roadmap)
-🤖 Multi-Agent Interview Panel
-📹 Video-based Interview Analysis
-🧠 Emotion Detection (Confidence vs Nervousness)
-🏆 Competitive Leaderboard System
-
-
-# 🤝 Contribution
-
-Pull requests are welcome!
-If you have ideas to make this system more brutal (and effective), feel free to contribute.

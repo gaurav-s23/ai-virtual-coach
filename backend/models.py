@@ -1,8 +1,14 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, JSON, Boolean, Text
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, JSON, Boolean, Text, Index
 from sqlalchemy.dialects.postgresql import JSONB  # PostgreSQL specific optimized JSON
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
-from database import Base
+from datetime import datetime
+try:
+    # When `backend` is used as a package (e.g. `python -m backend.main`)
+    from .database import Base
+except ImportError:
+    # When running from within the `backend/` directory (e.g. `uvicorn main:app`)
+    from database import Base
 
 class User(Base):
     __tablename__ = "users"
@@ -29,17 +35,42 @@ class User(Base):
     interviews = relationship("Interview", back_populates="candidate", cascade="all, delete-orphan")
     mocks = relationship("MockTest", back_populates="candidate", cascade="all, delete-orphan")
     english_sessions = relationship("EnglishSession", back_populates="candidate", cascade="all, delete-orphan")
+    refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
+
+
+class RefreshToken(Base):
+    __tablename__ = "refresh_tokens"
+    __table_args__ = (
+        Index("ix_refresh_tokens_user_id_created_at", "user_id", "created_at"),
+        Index("ix_refresh_tokens_token_hash", "token_hash"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash = Column(String(64), nullable=False, unique=True)
+    revoked = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+
+    user = relationship("User", back_populates="refresh_tokens")
 
 class Interview(Base):
     __tablename__ = "interviews"
+    __table_args__ = (
+        Index("ix_interviews_user_id_created_at", "user_id", "created_at"),
+        Index("ix_interviews_session_id", "session_id"),
+    )
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    session_id = Column(String(64), nullable=True, unique=True)
     
-    role = Column(String(100)) 
+    role = Column(String(100), index=True)
     overall_score = Column(Float)
     brutal_feedback = Column(Text) # Large text storage
-    transcript = Column(JSONB) # Optimized JSON storage for search and performance
+    # JSONB in Postgres, JSON elsewhere (SQLite-friendly for tests/dev).
+    transcript = Column(JSON().with_variant(JSONB, "postgresql"))
     
     had_pivot = Column(Boolean, default=True) # 8+5 sequence marker
     
@@ -48,11 +79,14 @@ class Interview(Base):
 
 class MockTest(Base):
     __tablename__ = "mock_tests"
+    __table_args__ = (
+        Index("ix_mock_tests_user_id_created_at", "user_id", "created_at"),
+    )
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     
-    category = Column(String(50)) 
+    category = Column(String(50), index=True)
     score = Column(Integer)
     total_questions = Column(Integer, default=20)
     
@@ -61,9 +95,12 @@ class MockTest(Base):
 
 class EnglishSession(Base):
     __tablename__ = "english_sessions"
+    __table_args__ = (
+        Index("ix_english_sessions_user_id_created_at", "user_id", "created_at"),
+    )
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     
     topic = Column(String(255))
     grammar_score = Column(Integer)
@@ -77,6 +114,9 @@ class EnglishSession(Base):
 
 class Attendance(Base):
     __tablename__ = "attendance"
+    __table_args__ = (
+        Index("ix_attendance_user_id_date", "user_id", "date"),
+    )
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     date = Column(DateTime(timezone=True), server_default=func.now())

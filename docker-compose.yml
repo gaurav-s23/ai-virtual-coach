@@ -1,0 +1,69 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: neuralhire_db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD-postgres}
+      POSTGRES_DB: ${POSTGRES_DB-ai_virtual_coach}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  migration:
+    build:
+      context: ./backend
+    command: sh -c "PYTHONPATH=/app alembic -c /app/alembic.ini upgrade head"
+    env_file:
+      - ./.env
+    environment:
+      # Force Compose-network hostname (NOT localhost)
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER-postgres}:${POSTGRES_PASSWORD-postgres}@db:5432/${POSTGRES_DB-ai_virtual_coach}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  backend:
+    build:
+      context: ./backend
+    env_file:
+      - ./.env
+    environment:
+      # Force Compose-network hostname (NOT localhost)
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER-postgres}:${POSTGRES_PASSWORD-postgres}@db:5432/${POSTGRES_DB-ai_virtual_coach}
+      HF_HOME: /app/.hf_cache
+      TRANSFORMERS_CACHE: /app/.hf_cache
+      SENTENCE_TRANSFORMERS_HOME: /app/.hf_cache
+      HF_HUB_READ_TIMEOUT: "60"
+      HF_HUB_ETAG_TIMEOUT: "60"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/.chroma:/app/.chroma
+      - ./backend/.hf_cache:/app/.hf_cache
+    depends_on:
+      migration:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Leave empty to use same-origin `/api` via Nginx proxy in `frontend/nginx.conf`.
+        VITE_API_URL: ${VITE_API_URL-}
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+

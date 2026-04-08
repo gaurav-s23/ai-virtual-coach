@@ -1,10 +1,47 @@
+--index-url https://download.pytorch.org/whl/cpu
+--extra-index-url https://pypi.org/simple
+
 fastapi==0.109.0
 uvicorn==0.27.0
 sqlalchemy==2.0.25
 psycopg2-binary==2.9.9
-google-genai==0.3.0
 python-multipart==0.0.9
 PyPDF2==3.0.1
 python-dotenv==1.0.1
-pydantic==2.6.1
+pydantic==2.12.5
 aiofiles==23.2.1
+pytest==8.3.5
+httpx==0.28.1
+pytest-asyncio==0.25.3
+pytest-cov==6.1.0
+
+python-jose[cryptography]==3.5.0
+passlib[bcrypt,argon2]==1.7.4
+argon2-cffi==25.1.0
+alembic==1.16.5
+slowapi==0.1.9
+limits==5.5.0
+
+# Explicit NumPy pin to avoid runtime "NumPy is not available" issues
+# and to keep compatibility with older binary deps in slim images.
+numpy==1.26.4
+
+# Agentic RAG (LangChain + Chroma; embeddings are fully local)
+langchain==1.2.11
+langchain-community==0.4.1
+langchain-huggingface==1.2.1
+chromadb==1.5.5
+langchain-chroma>=0.2.0
+pypdf==6.0.0
+sentence-transformers==5.1.1
+
+# Force CPU-only torch wheel (avoid CUDA modular deps).
+torch==2.2.2+cpu
+
+# Remote LLM integrations (not used for embeddings/RAG vectorization)
+google-genai>=1.56.0
+langchain-google-genai>=2.0.0
+
+# Unified multi-provider LLM interface + LangChain integration
+litellm==1.83.4
+langchain-litellm==0.6.4

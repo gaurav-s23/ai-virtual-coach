@@ -1,36 +1,81 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { 
-    Zap, Mic, BookOpen, BarChart3, Layout, Settings, LogOut, 
-    Flame, Target, ChevronRight, Activity, ShieldCheck, 
-    Cpu, ListChecks, Trophy, ArrowUpRight, TrendingUp, Search, CalendarCheck
+    Zap, Mic, BookOpen, Layout, LogOut,
+    Flame, Target, Activity,
+    Cpu, Trophy, CalendarCheck, Gauge
 } from 'lucide-react';
-import { motion } from 'framer-motion';
-import { Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer, Radar as RadarArea } from 'recharts';
+import axios from 'axios';
+import LoadingSpinner from '../components/LoadingSpinner';
+import ErrorState from '../components/ErrorState';
+import StatCard from '../components/StatCard';
+import SkillBars from '../components/SkillBars';
 
 export default function Dashboard() {
     const navigate = useNavigate();
     const location = useLocation();
     
+    const defaultStats = {
+        readiness: 65,
+        attendance: 1,
+        interviews: 0,
+        mocks: 0,
+        avgScore: 0,
+        lastScore: 0,
+        skills: [
+            { subject: 'Technical', A: 60 },
+            { subject: 'Logic', A: 50 },
+            { subject: 'Confidence', A: 70 },
+            { subject: 'Communication', A: 55 },
+            { subject: 'Pace', A: 60 },
+        ],
+        email: null,
+    };
+
     // --- PERSISTENT LOGIC: Load data from LocalStorage ---
     const [stats, setStats] = useState(() => {
         const saved = localStorage.getItem('neural_stats');
-        return saved ? JSON.parse(saved) : {
-            readiness: 65,
-            attendance: 1,
-            interviews: 0,
-            mocks: 0,
-            avgScore: 0,
-            lastScore: 0,
-            skills: [
-                { subject: 'Technical', A: 60 },
-                { subject: 'Logic', A: 50 },
-                { subject: 'Confidence', A: 70 },
-                { subject: 'Communication', A: 55 },
-                { subject: 'Pace', A: 60 },
-            ]
-        };
+        return saved ? JSON.parse(saved) : defaultStats;
     });
+
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+
+    const getUserId = () => {
+        try {
+            const user = JSON.parse(localStorage.getItem('user'));
+            return user?.id ?? 1;
+        } catch {
+            return 1;
+        }
+    };
+
+    const fetchDashboard = async () => {
+        const userId = getUserId();
+        setLoading(true);
+        setError(null);
+        try {
+            const apiBase = (import.meta?.env?.VITE_API_URL ?? '').replace(/\/$/, '');
+            const url = `${apiBase}/api/dashboard`;
+            const res = await axios.get(url, {
+                params: { user_id: userId },
+                timeout: 8000,
+            });
+            const data = res.data;
+            const merged = { ...defaultStats, ...data };
+            setStats(merged);
+            localStorage.setItem('neural_stats', JSON.stringify(merged));
+        } catch {
+            setError('Could not reach the backend at http://localhost:8000. Start FastAPI and try again.');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // --- FETCH ON MOUNT ---
+    useEffect(() => {
+        fetchDashboard();
+    }, []);
 
     // --- UPDATE LOGIC: If user just came from an attempt ---
     useEffect(() => {
@@ -55,9 +100,6 @@ export default function Dashboard() {
         }
 
         if (location.state?.mockResult) {
-            const { score, total } = location.state.mockResult;
-            const percentage = Math.round((score / total) * 100);
-            
             const updatedStats = {
                 ...stats,
                 mocks: stats.mocks + 1,
@@ -73,11 +115,12 @@ export default function Dashboard() {
     return (
         <div className="flex h-screen bg-[#020617] text-slate-200 font-sans overflow-hidden relative">
             
-            {/* --- THE LIGHT BLUE / CYAN GLOW BACKGROUND --- */}
+            {/* --- BACKGROUND --- */}
             <div className="absolute inset-0 z-0">
                 <div className="absolute top-[-10%] left-[-10%] w-[60%] h-[60%] bg-cyan-600/10 blur-[140px] rounded-full animate-pulse" />
                 <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-blue-600/10 blur-[140px] rounded-full animate-pulse" />
-                <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-[0.03] pointer-events-none" />
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(6,182,212,0.10),transparent_45%),radial-gradient(circle_at_80%_30%,rgba(59,130,246,0.10),transparent_45%),radial-gradient(circle_at_50%_80%,rgba(139,92,246,0.10),transparent_50%)] pointer-events-none" />
+                <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-[0.025] pointer-events-none" />
             </div>
 
             {/* --- SIDEBAR --- */}
@@ -117,6 +160,13 @@ export default function Dashboard() {
                         </div>
                     </header>
 
+                    {/* STATUS STRIP */}
+                    {loading ? (
+                        <LoadingSpinner label="Syncing dashboard" />
+                    ) : error ? (
+                        <ErrorState message={error} onRetry={fetchDashboard} />
+                    ) : null}
+
                     {/* PROGRESS TO TARGET BAR */}
                     <div className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-8 backdrop-blur-2xl">
                         <div className="flex justify-between items-center mb-4">
@@ -137,54 +187,39 @@ export default function Dashboard() {
 
                     {/* --- THE ANALYTICS GRID --- */}
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                        {/* 1. Readiness Circular Gauge */}
-                        <div className="bg-white/[0.02] border border-white/5 rounded-[3rem] p-10 flex flex-col items-center justify-center text-center relative group">
-                            <div className="absolute inset-0 bg-cyan-500/5 opacity-0 group-hover:opacity-100 transition-opacity rounded-[3rem]" />
-                            <p className="text-[10px] font-black tracking-[0.3em] text-cyan-500 uppercase mb-8">Neural Readiness</p>
-                            <div className="relative flex items-center justify-center">
-                                <svg className="w-44 h-44 rotate-[-90deg]">
-                                    <circle className="text-white/5" strokeWidth="12" stroke="currentColor" fill="transparent" r="80" cx="88" cy="88" />
-                                    <circle className="text-cyan-500 transition-all duration-1000" strokeWidth="12" strokeDasharray={502} strokeDashoffset={502 - (502 * stats.readiness) / 100} strokeLinecap="round" stroke="currentColor" fill="transparent" r="80" cx="88" cy="88" />
-                                </svg>
-                                <div className="absolute inset-0 flex flex-col items-center justify-center rotate-[0deg]">
-                                    <span className="text-6xl font-black text-white italic">{stats.readiness}<span className="text-xl text-cyan-500">%</span></span>
-                                </div>
-                            </div>
-                            <div className="mt-8 flex gap-4 w-full">
-                                <div className="flex-1 bg-black/20 p-4 rounded-2xl border border-white/5">
-                                    <p className="text-[9px] text-gray-500 uppercase font-black">Prev Score</p>
-                                    <p className="text-xl font-bold text-white">{stats.lastScore}</p>
-                                </div>
-                                <div className="flex-1 bg-black/20 p-4 rounded-2xl border border-white/5">
-                                    <p className="text-[9px] text-gray-500 uppercase font-black">Avg Score</p>
-                                    <p className="text-xl font-bold text-cyan-400">{stats.avgScore}</p>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* 2. Skill Radar Chart */}
-                        <div className="bg-white/[0.02] border border-white/5 rounded-[3rem] p-8">
-                            <p className="text-[10px] font-black tracking-[0.3em] text-blue-400 uppercase mb-6 text-center">Neural Matrix</p>
-                            <div className="h-[280px] w-full">
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <RadarChart cx="50%" cy="50%" outerRadius="80%" data={stats.skills}>
-                                        <PolarGrid stroke="#ffffff10" />
-                                        <PolarAngleAxis dataKey="subject" tick={{ fill: '#94a3b8', fontSize: 10, fontWeight: 'bold' }} />
-                                        <RadarArea name="Cadet" dataKey="A" stroke="#06b6d4" fill="#06b6d4" fillOpacity={0.4} />
-                                    </RadarChart>
-                                </ResponsiveContainer>
-                            </div>
-                        </div>
-
-                        {/* 3. Stats Column (Counters) */}
                         <div className="space-y-6">
-                            <AttemptCard icon={<Mic />} label="Interview Probes" count={stats.interviews} color="cyan" />
-                            <AttemptCard icon={<BookOpen />} label="Mock Assessments" count={stats.mocks} color="blue" />
-                            <div className="bg-gradient-to-br from-cyan-600 to-blue-700 p-8 rounded-[2.5rem] shadow-xl relative overflow-hidden group">
+                            <StatCard
+                                icon={<Gauge size={18} />}
+                                label="Readiness"
+                                value={`${stats.readiness}%`}
+                                hint="Signal strength for senior-track readiness."
+                                tone="cyan"
+                            />
+                            <StatCard
+                                icon={<Mic size={18} />}
+                                label="Interviews"
+                                value={stats.interviews}
+                                hint="Brutal probes completed."
+                                tone="blue"
+                            />
+                            <StatCard
+                                icon={<BookOpen size={18} />}
+                                label="Mocks"
+                                value={stats.mocks}
+                                hint="Assessments attempted."
+                                tone="violet"
+                            />
+                        </div>
+
+                        <div className="lg:col-span-2">
+                            <SkillBars skills={stats.skills} />
+                            <div className="mt-6 bg-gradient-to-br from-cyan-600/90 to-blue-700/90 p-8 rounded-[2.5rem] shadow-xl relative overflow-hidden group border border-white/10">
                                 <Cpu className="absolute -right-4 -bottom-4 w-32 h-32 text-white/10 group-hover:scale-110 transition-transform" />
                                 <p className="text-[10px] font-black text-cyan-100 uppercase tracking-widest mb-2">Next Milestone</p>
                                 <h4 className="text-2xl font-black text-white italic">Technical Principal</h4>
-                                <p className="text-cyan-100/60 text-xs mt-4 leading-relaxed font-medium">Complete 5 more high-score interviews to unlock advanced system design probes.</p>
+                                <p className="text-cyan-100/70 text-xs mt-4 leading-relaxed font-medium">
+                                    Complete 5 more high-score interviews to unlock advanced system design probes.
+                                </p>
                             </div>
                         </div>
                     </div>

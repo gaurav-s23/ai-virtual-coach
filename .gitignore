@@ -6,6 +6,12 @@ venv/
 .env
 data/pdfs/*
 !data/pdfs/.gitkeep
+backend/.hf_cache/
+backend/.chroma/
+backend/.chroma/**/*
+backend/.hf_cache/**/*
+backend/.chroma/chroma.sqlite3
+backend/.chroma/*.sqlite3
 
 # Node / Frontend
 node_modules/

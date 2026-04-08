@@ -2,37 +2,40 @@ import os
 import json
 import asyncio
 import re
-from google import genai
+import logging
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# Use 1.5-flash for maximum reliability on free tier quotas
-GEMINI_MODEL = "gemini-2.5-flash" 
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+# Logger used by API + AI engine
+logger = logging.getLogger("ai_virtual_coach.ai_engine")
+
+try:
+    # Package import
+    from .llm.router import complete_with_fallback
+except ImportError:
+    # Local import (when running from backend/ dir)
+    from llm.router import complete_with_fallback
 
 # =========================
 # 🧠 CORE AI ENGINE
 # =========================
-async def call_gemini(prompt, system_instruction=""):
+async def call_llm(prompt, system_instruction=""):
     """
-    Neural Engine Wrapper. Handles retries and system instructions.
+    Neural Engine Wrapper (self-healing).
+    Uses a tiered fallback strategy across providers via LiteLLM.
     """
     try:
-        # We use asyncio.to_thread to keep the FastAPI event loop non-blocking
-        response = await asyncio.to_thread(
-            client.models.generate_content,
-            model=GEMINI_MODEL,
-            config={
-                "system_instruction": system_instruction,
-                "temperature": 0.7,
-                "top_p": 0.95,
-            },
-            contents=prompt
+        result = await complete_with_fallback(
+            prompt=prompt,
+            system=system_instruction or None,
+            timeout_s=float(os.getenv("LLM_TIMEOUT_S", "30")),
+            temperature=float(os.getenv("LLM_TEMPERATURE", "0.7")),
+            top_p=float(os.getenv("LLM_TOP_P", "0.95")),
         )
-        return response.text
+        return result.text if result else None
     except Exception as e:
-        print(f"❌ NEURAL ENGINE ERROR: {str(e)}")
+        logger.exception("LLM call failed: %s", str(e))
         return None
 
 def clean_json_response(raw_text):
@@ -66,7 +69,7 @@ async def generate_initial_interview(resume_text, jd_text, role):
       "questions": ["q1", "q2", ..., "q10"]
     }}
     """
-    raw = await call_gemini(prompt, system)
+    raw = await call_llm(prompt, system)
     return clean_json_response(raw)
 
 async def generate_pivot_deepdives(history, role, context):
@@ -87,7 +90,7 @@ async def generate_pivot_deepdives(history, role, context):
       "deep_dives": ["q1", "q2", "q3", "q4", "q5"]
     }}
     """
-    raw = await call_gemini(prompt, system)
+    raw = await call_llm(prompt, system)
     return clean_json_response(raw)
 
 # =========================
@@ -117,7 +120,7 @@ async def generate_neural_quiz(pdf_text, category):
       }}
     ]
     """
-    raw = await call_gemini(prompt, system)
+    raw = await call_llm(prompt, system)
     return clean_json_response(raw)
 
 # =========================
@@ -137,5 +140,5 @@ async def generate_final_report(history):
       "ready_for_senior_role": true/false
     }}
     """
-    raw = await call_gemini(prompt, system)
+    raw = await call_llm(prompt, system)
     return clean_json_response(raw)
