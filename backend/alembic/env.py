@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import sys
+from pathlib import Path
 from logging.config import fileConfig
 
 from alembic import context
@@ -27,6 +29,14 @@ def _database_url() -> str:
 # Add your model's MetaData object here
 # In Docker, WORKDIR is /app and `models.py` lives at /app/models.py.
 # When running locally from repo root, `backend.models` is importable.
+# Ensure both repo-root/backend paths are importable in all execution modes.
+THIS_FILE = Path(__file__).resolve()
+BACKEND_ROOT = THIS_FILE.parent.parent
+REPO_ROOT = BACKEND_ROOT.parent
+for p in (str(BACKEND_ROOT), str(REPO_ROOT), "/app", "/app/backend"):
+    if p not in sys.path:
+        sys.path.insert(0, p)
+
 try:
     from backend.models import Base  # type: ignore
 except Exception:

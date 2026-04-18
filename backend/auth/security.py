@@ -85,11 +85,11 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         return False
 
 
-def create_access_token(*, user_id: int) -> str:
+def create_access_token(*, user_id: int, role: str = "user") -> str:
     """Create a JWT access token."""
     now = datetime.now(timezone.utc)
     exp = now + timedelta(minutes=_access_exp_minutes())
-    payload = {"sub": str(user_id), "type": "access", "iat": int(now.timestamp()), "exp": exp}
+    payload = {"sub": str(user_id), "type": "access", "role": role, "iat": int(now.timestamp()), "exp": exp}
     return jwt.encode(payload, _jwt_secret(), algorithm=_jwt_algorithm())
 
 

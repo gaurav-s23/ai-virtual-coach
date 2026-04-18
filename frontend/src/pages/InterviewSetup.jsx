@@ -1,10 +1,10 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { 
-    Upload, Play, Loader2, ChevronRight, Sparkles, Zap, Shield, 
-    CheckCircle2, Briefcase, Clock, GraduationCap, Video, Mic, ShieldCheck 
+    Upload, Loader2, Sparkles, Zap, 
+    CheckCircle2, Briefcase, Clock, Video, Mic, ShieldCheck 
 } from "lucide-react";
-import axios from "axios";
+import api from "../services/api";
 import { motion, AnimatePresence } from "framer-motion";
 
 const BackgroundEffect = () => (
@@ -36,6 +36,7 @@ export default function InterviewSetup() {
   const [hardwareGranted, setHardwareGranted] = useState({ cam: false, mic: false });
   
   const [data, setData] = useState({ 
+    name: "",
     role: "", 
     type: "Technical", 
     experience: "Intermediate", 
@@ -60,13 +61,12 @@ export default function InterviewSetup() {
     
     const formData = new FormData();
     formData.append("resume", data.resume);
+    formData.append("name", data.name);
     formData.append("jd", data.jd);
     formData.append("role", data.role);
-    formData.append("experience", data.experience);
-    formData.append("type", data.type);
 
     try {
-      const res = await axios.post("http://127.0.0.1:8000/api/start-interview", formData);
+      const res = await api.post("/api/start-interview", formData);
       // Moving to simulation with full blueprint context
       navigate("/live-interview", { 
         state: { 
@@ -76,7 +76,7 @@ export default function InterviewSetup() {
         } 
       });
     } catch (err) {
-      alert("Neural Link Failed: Server unreachable.");
+      alert("Resume failed");
     } finally {
       setLoading(false);
     }
@@ -146,9 +146,14 @@ export default function InterviewSetup() {
               {step === 1 && (
                 <motion.div key="1" variants={variants} initial="enter" animate="center" exit="exit" className="space-y-8">
                   <div className="space-y-2">
-                    <h2 className="text-3xl font-bold tracking-tight">Step 1: The Target</h2>
+                    <h2 className="text-3xl font-bold tracking-tight">Step 1: Candidate + Target</h2>
                     <p className="text-gray-500">Define your domain and specific role.</p>
                   </div>
+                  <input
+                    placeholder="Enter your name"
+                    className="w-full bg-white/[0.03] border border-white/10 rounded-2xl px-6 py-4 text-lg outline-none focus:border-blue-500/50 transition-all"
+                    onChange={(e) => setData({ ...data, name: e.target.value })}
+                  />
                   <div className="flex p-1 bg-white/5 rounded-2xl border border-white/5">
                     {["Technical", "Non-Tech"].map(t => (
                         <button key={t} onClick={() => setData({...data, type: t})} className={`flex-1 py-3 rounded-xl text-xs font-bold transition-all ${data.type === t ? 'bg-blue-600 text-white' : 'text-gray-500'}`}>
@@ -164,7 +169,7 @@ export default function InterviewSetup() {
                       onChange={(e) => setData({ ...data, role: e.target.value })}
                     />
                   </div>
-                  <button onClick={() => setStep(2)} disabled={!data.role} className="w-full bg-white text-black py-5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-blue-500 hover:text-white transition-all disabled:opacity-50">
+                  <button onClick={() => setStep(2)} disabled={!data.role || !data.name} className="w-full bg-white text-black py-5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-blue-500 hover:text-white transition-all disabled:opacity-50">
                     Next Phase
                   </button>
                 </motion.div>

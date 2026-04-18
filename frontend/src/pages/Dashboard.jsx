@@ -5,7 +5,7 @@ import {
     Flame, Target, Activity,
     Cpu, Trophy, CalendarCheck, Gauge
 } from 'lucide-react';
-import axios from 'axios';
+import api from '../services/api';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorState from '../components/ErrorState';
 import StatCard from '../components/StatCard';
@@ -55,9 +55,7 @@ export default function Dashboard() {
         setLoading(true);
         setError(null);
         try {
-            const apiBase = (import.meta?.env?.VITE_API_URL ?? '').replace(/\/$/, '');
-            const url = `${apiBase}/api/dashboard`;
-            const res = await axios.get(url, {
+            const res = await api.get('/api/dashboard', {
                 params: { user_id: userId },
                 timeout: 8000,
             });
@@ -66,7 +64,7 @@ export default function Dashboard() {
             setStats(merged);
             localStorage.setItem('neural_stats', JSON.stringify(merged));
         } catch {
-            setError('Could not reach the backend at http://localhost:8000. Start FastAPI and try again.');
+            setError('Backend unreachable. Please check your connection and try again.');
         } finally {
             setLoading(false);
         }

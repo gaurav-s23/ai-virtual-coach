@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios'; // 👈 1. Yeh import miss tha
+import api from '../services/api';
 import { ShieldCheck, Mail, Lock } from 'lucide-react';
 
 export default function Auth() {
@@ -12,18 +12,25 @@ export default function Auth() {
     const handleSubmit = async (e) => {
         e.preventDefault();
         try {
-            // 👈 2. Directly calling the URL to ensure connection
-            const response = await axios.post("http://127.0.0.1:8000/api/login", {
+            const endpoint = isLogin ? "/api/login" : "/api/auth/signup";
+            const response = await api.post(endpoint, {
                 email: email,
-                password: password
+                password: password,
+                name: "Candidate",
             });
-            
+
+            if (!isLogin) {
+                alert("Account created! Please log in.");
+                setIsLogin(true);
+                return;
+            }
+
             if (response.data) {
                 console.log("Success:", response.data);
-                localStorage.setItem('user', JSON.stringify(response.data.user));
+                localStorage.setItem("user", JSON.stringify(response.data.user));
+                localStorage.setItem("token", response.data.access_token || response.data.token);
                 alert("Login Successful!");
-                navigate('/'); 
-                window.location.reload(); 
+                navigate("/dashboard");
             }
         } catch (error) {
             // 👈 3. Bullet-proof error handling

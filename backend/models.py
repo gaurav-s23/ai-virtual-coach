@@ -67,6 +67,10 @@ class Interview(Base):
     session_id = Column(String(64), nullable=True, unique=True)
     
     role = Column(String(100), index=True)
+    candidate_name = Column(String(120), nullable=True)
+    status = Column(String(32), default="starting", nullable=False)
+    current_question = Column(Integer, default=0, nullable=False)
+    resume_context = Column(Text, nullable=True)
     overall_score = Column(Float)
     brutal_feedback = Column(Text) # Large text storage
     # JSONB in Postgres, JSON elsewhere (SQLite-friendly for tests/dev).
@@ -92,6 +96,43 @@ class MockTest(Base):
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     candidate = relationship("User", back_populates="mocks")
+
+
+class GlobalMock(Base):
+    __tablename__ = "global_mocks"
+    __table_args__ = (Index("ix_global_mocks_created_at", "created_at"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    questions = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class RagStatus(Base):
+    __tablename__ = "rag_status"
+    __table_args__ = (
+        Index("ix_rag_status_user_id", "user_id"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True)
+    status = Column(String(16), default="processing", nullable=False)
+    message = Column(String(255), default="Resume embedding in progress", nullable=False)
+    chunks = Column(Integer, default=0, nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class CacheEntry(Base):
+    __tablename__ = "cache_entries"
+    __table_args__ = (
+        Index("ix_cache_entries_key", "key"),
+        Index("ix_cache_entries_expires_at", "expires_at"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    key = Column(String(255), unique=True, nullable=False)
+    value_json = Column(Text, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class EnglishSession(Base):
     __tablename__ = "english_sessions"

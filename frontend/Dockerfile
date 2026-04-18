@@ -1,14 +1,21 @@
-FROM node:22-alpine AS build
+FROM node:22-alpine AS base
 
 WORKDIR /app
 
 COPY package.json package-lock.json ./
 RUN npm install
 
+FROM base AS dev
+
 COPY . .
 
-# Optional build-time API base URL for Vite (e.g. http://localhost:8000).
-# If you leave it empty, the app will use same-origin `/api` via Nginx.
+EXPOSE 5173
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]
+
+FROM base AS build
+
+COPY . .
+
 ARG VITE_API_URL=
 ENV VITE_API_URL=$VITE_API_URL
 

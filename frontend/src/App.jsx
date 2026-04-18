@@ -6,6 +6,8 @@ import LiveInterview from './pages/LiveInterview';
 import Dashboard from './pages/Dashboard';           
 import MockTest from './pages/MockTest'; 
 import EnglishPractice from './pages/EnglishPractice';
+import AdminLogin from './pages/AdminLogin';
+import AdminDashboard from './pages/AdminDashboard';
 
 const ProtectedRoute = ({ children }) => {
     const user = localStorage.getItem('user'); 
@@ -43,6 +45,8 @@ function App() {
                 <Route path="/dashboard" element={
                     <ProtectedRoute> <Dashboard /> </ProtectedRoute>
                 } />
+                <Route path="/admin/login" element={<AdminLogin />} />
+                <Route path="/admin" element={<AdminDashboard />} />
 
                 {/* Fallback Route */}
                 <Route path="*" element={<Navigate to="/" />} />

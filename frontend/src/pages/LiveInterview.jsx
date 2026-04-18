@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Mic, Send, Loader2, Video, MicOff, MessageSquare, XCircle, Zap, ChevronRight, Volume2, Clock } from 'lucide-react';
-import axios from 'axios';
+import { Mic, Send, Loader2, Video, MicOff, MessageSquare, XCircle, Zap, Volume2, Clock } from 'lucide-react';
+import api from '../services/api';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export default function LiveInterview() {
@@ -9,17 +9,32 @@ export default function LiveInterview() {
     const navigate = useNavigate();
     
     // Initial data from setup
-    const { questions: initialQuestions = [], intro = "System initialized.", context = "", role = "" } = location.state || {};
+    const {
+        skill_questions = [],
+        project_questions = [],
+        followup_questions = [],
+        intro = "System initialized.",
+        context = "",
+        role = "",
+        session_id = null,
+        candidate_name = "Candidate",
+        interview_status = "starting",
+        countdown_seconds = 8,
+    } = location.state || {};
 
-    const [questions, setQuestions] = useState(initialQuestions);
+    const [questions, setQuestions] = useState([]);
+    const [skillQuestions, setSkillQuestions] = useState([]);
+    const [projectQuestions, setProjectQuestions] = useState([]);
     const [currentIndex, setCurrentIndex] = useState(0);
     const [messages, setMessages] = useState([{ role: 'ai', text: intro }]);
     const [userInput, setUserInput] = useState('');
     const [loading, setLoading] = useState(false);
     const [isListening, setIsListening] = useState(false);
     const [isAiSpeaking, setIsAiSpeaking] = useState(false); 
-    const [phase, setPhase] = useState('primary'); // 'primary' or 'deepdive'
+    const [phase, setPhase] = useState('skills');
     const [timeLeft, setTimeLeft] = useState(1800); 
+    const [startCountdown, setStartCountdown] = useState(countdown_seconds);
+    const [statusText, setStatusText] = useState("Preparing interview...");
     const [performanceLog, setPerformanceLog] = useState([]);
 
     const videoRef = useRef(null);
@@ -82,9 +97,24 @@ export default function LiveInterview() {
         }
 
         // Start Sequence
+        const initialSkillQuestions = skill_questions || [];
+        const initialProjectQuestions = project_questions || [];
+        setSkillQuestions(initialSkillQuestions);
+        setProjectQuestions(initialProjectQuestions);
+        setQuestions(initialSkillQuestions);
+        setPhase('skills');
         speak(intro, () => {
-            setTimeout(() => {
-                if (questions.length > 0) askQuestion(0);
+            setStatusText("Starting...");
+            const interval = setInterval(() => {
+                setStartCountdown((prev) => {
+                    if (prev <= 1) {
+                        clearInterval(interval);
+                        setStatusText("Question 1...");
+                        if (initialSkillQuestions.length > 0) askQuestion(0, initialSkillQuestions);
+                        return 0;
+                    }
+                    return prev - 1;
+                });
             }, 1000);
         });
 
@@ -92,7 +122,7 @@ export default function LiveInterview() {
             window.speechSynthesis.cancel();
             if (recognitionRef.current) recognitionRef.current.stop();
         };
-    }, []);
+    }, [intro, project_questions, skill_questions, followup_questions]);
 
     // Timer Logic
     useEffect(() => {
@@ -125,14 +155,24 @@ export default function LiveInterview() {
         toggleListening(false);
         const answer = userInput;
         const currentQ = questions[currentIndex];
+        const isUserAsking = answer.trim().endsWith('?') && answer.trim().split(' ').length < 12;
+
+        if (isUserAsking) {
+            const redirect = "That's a fair thought, but let's stay focused on the interview. " + questions[currentIndex];
+            setMessages(prev => [...prev, { role: 'ai', text: redirect }]);
+            speak(redirect, () => toggleListening(true));
+            setLoading(false);
+            setUserInput('');
+            return;
+        }
         
         setMessages(prev => [...prev, { role: 'user', text: answer }]);
         setLoading(true);
 
         try {
             // Get immediate feedback for the current answer
-            const res = await axios.post("http://127.0.0.1:8000/api/interview/chat", {
-                answer, question: currentQ, context
+            const res = await api.post('/api/interview/chat', {
+                answer, question: currentQ, context, session_id
             });
 
             const feedback = res.data.reply;
@@ -142,46 +182,58 @@ export default function LiveInterview() {
             setMessages(prev => [...prev, { role: 'ai', text: feedback, type: 'feedback' }]);
             
             speak(feedback, async () => {
-                // --- A. THE PIVOT (8+5 Logic) ---
-                if (currentIndex === 7 && phase === 'primary') {
+                if (phase === 'skills' && currentIndex >= skillQuestions.length - 1) {
+                    setQuestions(projectQuestions);
+                    setCurrentIndex(0);
+                    setPhase('projects');
+                    setStatusText("Project round started");
+                    const msg = "Good. Now let's talk about your projects.";
+                    setMessages(prev => [...prev, { role: 'ai', text: msg }]);
+                    speak(msg, () => askQuestion(0, projectQuestions));
+                } else if (phase === 'projects' && currentIndex >= projectQuestions.length - 1) {
                     setLoading(true);
                     try {
-                        const pivotRes = await axios.post("http://127.0.0.1:8000/api/interview/pivot", {
-                            history: updatedLog, // Sending the full 8-question history
+                        const pivotRes = await api.post('/api/interview/pivot', {
+                            history: updatedLog,
                             context,
                             role
                         });
                         
-                        const pivotQuestions = pivotRes.data.deep_dives;
-                        const pivotIntro = `Neural Analysis: ${pivotRes.data.analysis}. Starting deep-dive phase.`;
+                        const followups = pivotRes.data.deep_dives || [];
+                        const pivotIntro = `Analysis complete. ${pivotRes.data.analysis} Let me ask some deeper questions.`;
                         
                         setMessages(prev => [...prev, { role: 'ai', text: pivotIntro }]);
-                        setQuestions(pivotQuestions);
+                        setQuestions(followups);
                         setCurrentIndex(0);
-                        setPhase('deepdive');
+                        setPhase('followup');
+                        setStatusText("Follow-up round started");
                         setLoading(false);
 
                         speak(pivotIntro, () => {
-                            askQuestion(0, pivotQuestions);
+                            askQuestion(0, followups);
                         });
                     } catch (e) {
                         console.error("Pivot Trigger Failed:", e);
                         finishInterview("System Error: Critical failure in pivot module. Saving data.");
                     }
+                } else if (phase === 'followup' && currentIndex >= questions.length - 1) {
+                    finishInterview();
                 } else {
-                    // Normal Question Increment
                     const nextIdx = currentIndex + 1;
-                    if (nextIdx < questions.length) {
-                        setCurrentIndex(nextIdx);
-                        askQuestion(nextIdx);
-                    } else {
-                        finishInterview();
-                    }
+                    setCurrentIndex(nextIdx);
+                    setStatusText(`Question ${nextIdx + 1}...`);
+                    askQuestion(nextIdx);
                 }
             });
         } catch (err) {
             console.error("Transmission Error:", err);
-            alert("Neural Link Interrupted. Retrying...");
+            if (err?.response?.status === 404) {
+                alert("Session expired");
+            } else if (err?.response?.status === 503) {
+                alert("Timeout retry");
+            } else {
+                alert("Server error, try again");
+            }
         } finally {
             setLoading(false);
         }
@@ -210,9 +262,11 @@ export default function LiveInterview() {
                         </div>
                         <div>
                             <p className="text-[10px] font-black tracking-[0.2em] text-blue-500 uppercase">Core Logic v2.5</p>
+                            <p className="text-[10px] font-black tracking-[0.2em] text-emerald-400 uppercase">Candidate: {candidate_name}</p>
                             <p className="text-sm font-bold tracking-tight">
-                                {phase === 'primary' ? 'PRIMARY EVALUATION' : 'DEEP-DIVE PHASE'}
+                                {phase === 'skills' ? 'SKILLS PHASE' : phase === 'projects' ? 'PROJECTS PHASE' : 'FOLLOW-UP PHASE'}
                             </p>
+                            <p className="text-xs text-slate-400">{statusText} {startCountdown > 0 ? `(${startCountdown}s)` : ""}</p>
                         </div>
                     </div>
 
@@ -222,7 +276,11 @@ export default function LiveInterview() {
                             <span className="font-mono text-lg font-black">{formatTime(timeLeft)}</span>
                         </div>
                         <div className="px-5 py-2.5 rounded-2xl bg-blue-600 text-white text-xs font-black shadow-[0_0_25px_rgba(37,99,235,0.4)] flex items-center">
-                            {phase === 'primary' ? `NODE ${currentIndex + 1} / 8` : `PROBE ${currentIndex + 1} / 5`}
+                            {phase === 'skills'
+                                ? `SKILL ${currentIndex + 1} / ${skillQuestions.length || 5}`
+                                : phase === 'projects'
+                                    ? `PROJECT ${currentIndex + 1} / ${projectQuestions.length || 5}`
+                                    : `FOLLOWUP ${currentIndex + 1} / ${questions.length || 5}`}
                         </div>
                     </div>
                 </div>

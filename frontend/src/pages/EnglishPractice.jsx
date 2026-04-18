@@ -6,7 +6,7 @@ import {
     RefreshCcw, Loader2, Volume2, XCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import axios from 'axios';
+import api from '../services/api';
 
 // --- THEMED BACKGROUND (Deep Navy & Light Blue Glows) ---
 const BackgroundEffect = () => (
@@ -41,7 +41,7 @@ export default function EnglishPractice() {
     // --- 1. INITIALIZATION ---
     useEffect(() => {
         // Fetch Topic
-        axios.get("http://127.0.0.1:8000/api/english/topic")
+        api.get('/api/english/topic')
             .then(res => setTopic(res.data.topic));
 
         // Setup Speech Recognition
@@ -85,7 +85,7 @@ export default function EnglishPractice() {
     const initializeSimulation = async () => {
         setLoading(true);
         try {
-            const res = await axios.post("http://127.0.0.1:8000/api/english/questions", { topic });
+            const res = await api.post('/api/english/questions', { topic });
             setQuestions(res.data.questions);
             setStep(3);
             const welcome = `Simulation initialized. Our topic is "${topic}". Let's begin. ${res.data.questions[0]}`;
@@ -123,22 +123,15 @@ export default function EnglishPractice() {
         setLoading(true);
 
         try {
-            // After 5 primary questions, trigger the PIVOT
+            // After 5 primary questions, generate report directly
             if (currentIndex === 4 && phase === 'primary') {
-                const res = await axios.post("http://127.0.0.1:8000/api/english/pivot", { history: currentMsgBatch });
-                setQuestions(res.data.deep_dives);
-                setCurrentIndex(0);
-                setPhase('deepdive');
-                const pivotIntro = "Fascinating perspective. Now, let's probe deeper into your logic.";
-                setMessages(prev => [...prev, { role: 'ai', text: pivotIntro }]);
-                speak(pivotIntro, () => {
-                    setMessages(prev => [...prev, { role: 'ai', text: res.data.deep_dives[0] }]);
-                    speak(res.data.deep_dives[0], () => toggleListening(true));
-                });
+                const res = await api.post('/api/english/report', { history: currentMsgBatch });
+                setReport(res.data);
+                setStep(4);
             } 
             // If 5 deep-dives are done, generate report
             else if (currentIndex === 4 && phase === 'deepdive') {
-                const res = await axios.post("http://127.0.0.1:8000/api/english/report", { history: currentMsgBatch });
+                const res = await api.post('/api/english/report', { history: currentMsgBatch });
                 setReport(res.data);
                 setStep(4);
             } 
@@ -318,18 +311,18 @@ export default function EnglishPractice() {
                                 <Award size={56} className="text-cyan-400" />
                             </div>
                             <h2 className="text-5xl font-black italic uppercase tracking-tighter text-white leading-none">Fluency Dossier</h2>
-                            <p className="text-cyan-500 font-bold tracking-[0.4em] uppercase text-[11px] mt-6">Candidate Proficiency: {report.overall_rating}</p>
+                            <p className="text-cyan-500 font-bold tracking-[0.4em] uppercase text-[11px] mt-6">Candidate Proficiency: {report.overall_score} / 100</p>
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                            <ScoreCard label="Grammar Index" value={report.grammar_score} color="cyan" />
-                            <ScoreCard label="Vocab Matrix" value={report.vocabulary_score} color="blue" />
-                            <ScoreCard label="Neural Cadence" value={report.fluency_score} color="indigo" />
+                            <ScoreCard label="Technical Rating" value={report.technical_rating} color="cyan" />
+                            <ScoreCard label="Communication" value={report.communication_rating} color="blue" />
+                            <ScoreCard label="Overall Score" value={report.overall_score} color="indigo" />
                         </div>
 
                         <div className="p-10 bg-black/40 border border-white/10 rounded-[3rem] italic text-gray-200 text-lg text-center leading-relaxed font-medium">
                             <p className="text-[10px] not-italic font-black text-cyan-500 uppercase tracking-widest mb-4">Neural Critique</p>
-                            "{report.critique}"
+                            "{report.brutal_feedback}"
                         </div>
 
                         <div className="flex gap-4">

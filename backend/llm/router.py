@@ -24,11 +24,7 @@ def default_fallback_models() -> list[str]:
     - Gemini Flash (reliability/cost)
     - Local Ollama (no external dependency)
     """
-    return [
-        "gemini/gemini-1.5-pro",
-        "gemini/gemini-1.5-flash",
-        "ollama/llama3.1",
-    ]
+    return ["gemini/gemini-2.5-flash", "gemini/gemini-2.5-pro"]
 
 
 def get_fallback_models(env_var: str = "LLM_FALLBACK_MODELS") -> list[str]:
@@ -56,7 +52,7 @@ async def complete_with_fallback(
     prompt: str,
     system: str | None = None,
     models: Optional[Iterable[str]] = None,
-    timeout_s: float = 30.0,
+    timeout_s: float = 15.0,
     temperature: float = 0.7,
     top_p: float = 0.95,
     request_id: Optional[str] = None,

@@ -45,3 +45,4 @@ langchain-google-genai>=2.0.0
 # Unified multi-provider LLM interface + LangChain integration
 litellm==1.83.4
 langchain-litellm==0.6.4
+redis==6.4.0

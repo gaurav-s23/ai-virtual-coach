@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import api from '../services/api';
 import { 
     Zap, BrainCircuit, Loader2, Target, Clock, ChevronLeft, 
-    ChevronRight, Flag, Send, BarChart3, Trophy, ArrowLeft, XCircle
+    ChevronRight, Send, BarChart3
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -20,15 +20,18 @@ export default function MockTest() {
     const [status, setStatus] = useState({}); 
     const [timeLeft, setTimeLeft] = useState(1200); 
     const [loading, setLoading] = useState(false);
+    const [cacheHit, setCacheHit] = useState(false);
 
     // --- 1. START TEST (Synced with Backend Fail-safe Logic) ---
-    const startTest = async (cat) => {
+    const startTest = async (cat, forceNew = false) => {
         setCategory(cat);
+        setCacheHit(!forceNew);
         setLoading(true);
 
         try {
-            const res = await axios.post("http://127.0.0.1:8000/api/generate-quiz", { 
-                category: cat 
+            const res = await api.post('/api/generate-quiz', {
+                category: cat,
+                force_new: forceNew,
             });
 
             if (res.data && Array.isArray(res.data) && res.data.length > 0) {
@@ -37,11 +40,11 @@ export default function MockTest() {
                 setCurrentIndex(0);
                 setTimeLeft(1200);
             } else {
-                alert("Neural Engine failed to synthesize questions. Retrying...");
+                alert("Server error, try again");
             }
         } catch (e) {
             console.error("Network Error:", e);
-            alert(`Simulation Error: ${e.response?.data?.detail || "Check server connectivity"}`);
+            alert(e.response?.data?.detail || "Server error, try again");
         } finally {
             setLoading(false);
         }
@@ -68,7 +71,7 @@ export default function MockTest() {
         try {
             // Update Database Stats
             if (user?.id) {
-                await axios.post(`http://127.0.0.1:8000/api/user/update-stats/${user.id}`, {
+                await api.post(`/api/user/update-stats/${user.id}`, {
                     score: score,
                     type: "mock"
                 });
@@ -168,6 +171,14 @@ export default function MockTest() {
                         <div>
                             <p className="text-[10px] font-black text-cyan-500 uppercase tracking-widest leading-none mb-1">Assessment Engine</p>
                             <h2 className="font-bold text-white uppercase tracking-tighter text-lg">{category} node active</h2>
+                            {cacheHit && <span className="text-[10px] text-cyan-400 font-black uppercase tracking-widest">⚡ Loaded from cache</span>}
+                            <button
+                                onClick={() => startTest(category, true)}
+                                disabled={loading}
+                                className="ml-3 text-[10px] px-2 py-1 rounded bg-cyan-800 text-cyan-100"
+                            >
+                                New Mock
+                            </button>
                         </div>
                     </div>
                     <div className={`px-6 py-3 bg-white/5 border rounded-2xl font-mono text-2xl shadow-inner flex items-center gap-3 transition-colors ${timeLeft < 300 ? 'text-red-500 border-red-500/40 animate-pulse' : 'text-cyan-400 border-white/10'}`}>
