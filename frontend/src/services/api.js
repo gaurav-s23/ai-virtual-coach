@@ -5,8 +5,7 @@ const DEFAULT_API_URL = "http://localhost:8000";
 export const API_BASE = (import.meta?.env?.VITE_API_URL ?? DEFAULT_API_URL).replace(/\/$/, "");
 
 const api = axios.create({
-    baseURL: API_BASE,
-    headers: { "Content-Type": "application/json" }
+    baseURL: API_BASE
 });
 
 api.interceptors.request.use((config) => {
@@ -36,9 +35,9 @@ api.interceptors.response.use(
 // Login Function
 export const loginUser = async (credentials) => {
     const response = await api.post('/api/login', credentials);
-    if (response.data.token) {
-        localStorage.setItem('token', response.data.token);
-    }
+    const tok = response.data.access_token || response.data.token;
+    if (tok) localStorage.setItem('token', tok);
+    if (response.data.user) localStorage.setItem('user', JSON.stringify(response.data.user));
     return response.data;
 };
 

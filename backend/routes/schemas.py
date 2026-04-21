@@ -30,12 +30,20 @@ class ChatRequest(BaseModel):
     question: str = Field(min_length=1)
     context: str = ""
     session_id: Optional[str] = None
+    time_taken_seconds: Optional[float] = None
 
 
 class PivotRequest(BaseModel):
     history: list
     context: str
     role: str
+    session_id: Optional[str] = None
+
+
+class AnswerRelevanceResponse(BaseModel):
+    is_relevant: bool
+    score: float
+    verdict: Literal["on-topic", "off-topic", "partial"]
 
 
 class QuizRequest(BaseModel):
@@ -75,6 +83,9 @@ class ChatResponse(BaseModel):
     reply: str
     readiness_score: Optional[int] = None
     state: Optional[str] = None
+    quality_score: Optional[float] = None
+    relevance: Optional[dict[str, Any]] = None
+    timing_flag: Optional[str] = None
 
 
 class PivotResponse(BaseModel):
@@ -140,3 +151,9 @@ class MeResponse(BaseModel):
     id: int
     email: str
     name: str
+
+
+class ProctorLogRequest(BaseModel):
+    session_id: str
+    event_type: str
+    timestamp: str

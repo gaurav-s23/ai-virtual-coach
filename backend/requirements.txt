@@ -33,10 +33,10 @@ langchain-huggingface==1.2.1
 chromadb==1.5.5
 langchain-chroma>=0.2.0
 pypdf==6.0.0
-sentence-transformers==5.1.1
+sentence-transformers>=2.2.2
 
 # Force CPU-only torch wheel (avoid CUDA modular deps).
-torch==2.2.2+cpu
+torch>=2.0.0
 
 # Remote LLM integrations (not used for embeddings/RAG vectorization)
 google-genai>=1.56.0
@@ -46,3 +46,8 @@ langchain-google-genai>=2.0.0
 litellm==1.83.4
 langchain-litellm==0.6.4
 redis==6.4.0
+librosa>=0.10.0
+soundfile>=0.12.0
+torchaudio>=2.0.0
+transformers>=4.35.0
+websockets>=11.0

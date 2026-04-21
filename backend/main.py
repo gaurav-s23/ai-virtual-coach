@@ -6,7 +6,7 @@ import uuid
 import importlib
 import os
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -21,6 +21,7 @@ try:
     from .routes.admin import router as admin_router
     from .routes.mock import router as mock_router
     from .routes.user import router as user_router
+    from .routes.proctor import router as proctor_router
 except ImportError:
     from core.config import get_settings  # type: ignore
     from database import engine  # type: ignore
@@ -31,6 +32,7 @@ except ImportError:
     from routes.admin import router as admin_router  # type: ignore
     from routes.mock import router as mock_router  # type: ignore
     from routes.user import router as user_router  # type: ignore
+    from routes.proctor import router as proctor_router  # type: ignore
 
 settings = get_settings()
 logger = logging.getLogger("ai_virtual_coach.api")
@@ -38,7 +40,12 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 
 app = FastAPI(title=settings.app_name, version=settings.app_version)
 
-origins = ["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000"]
+_cors_raw = os.getenv("CORS_ORIGINS", "")
+origins = [o.strip() for o in _cors_raw.split(",") if o.strip()] or [
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+]
 if settings.frontend_url:
     origins.append(settings.frontend_url)
 app.add_middleware(
@@ -112,6 +119,23 @@ app.include_router(interview_router)
 app.include_router(admin_router)
 app.include_router(mock_router)
 app.include_router(user_router)
+app.include_router(proctor_router)
+
+_ws_connections: dict = {}
+
+
+@app.websocket("/ws/interview/{session_id}")
+async def interview_ws(websocket: WebSocket, session_id: str):
+    await websocket.accept()
+    _ws_connections[session_id] = websocket
+    try:
+        while True:
+            data = await websocket.receive_text()
+            await websocket.send_text(data)
+    except WebSocketDisconnect:
+        _ws_connections.pop(session_id, None)
+    except Exception:
+        _ws_connections.pop(session_id, None)
 
 
 @app.get("/")

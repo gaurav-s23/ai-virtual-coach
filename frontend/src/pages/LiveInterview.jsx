@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 export default function LiveInterview() {
     const location = useLocation();
     const navigate = useNavigate();
-    
+
     // Initial data from setup
     const {
         skill_questions = [],
@@ -21,6 +21,11 @@ export default function LiveInterview() {
         interview_status = "starting",
         countdown_seconds = 8,
     } = location.state || {};
+
+    if (!session_id || !skill_questions?.length) {
+        navigate('/setup-interview', { replace: true });
+        return null;
+    }
 
     const [questions, setQuestions] = useState([]);
     const [skillQuestions, setSkillQuestions] = useState([]);
@@ -40,11 +45,45 @@ export default function LiveInterview() {
     const videoRef = useRef(null);
     const chatEndRef = useRef(null);
     const recognitionRef = useRef(null);
+    const wsRef = useRef(null);
+    const questionStartTime = useRef(Date.now());
+
+    const activeQuestion = questions[currentIndex] || "Preparing your first question...";
+
+    const logProctorEvent = async (event_type) => {
+        try { await api.post('/api/proctor/log', { session_id, event_type, timestamp: new Date().toISOString() }); }
+        catch {}
+    };
 
     // D. AUTO-SCROLL LOGIC
     useEffect(() => {
         chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }, [messages]);
+
+    useEffect(() => {
+        const onBlur = () => logProctorEvent('tab_switch');
+        const onHide = () => { if (document.hidden) logProctorEvent('tab_hidden'); };
+        window.addEventListener('blur', onBlur);
+        document.addEventListener('visibilitychange', onHide);
+        return () => {
+            window.removeEventListener('blur', onBlur);
+            document.removeEventListener('visibilitychange', onHide);
+        };
+    }, [session_id]);
+
+    useEffect(() => {
+        if (!session_id) return;
+        const wsBase = (import.meta?.env?.VITE_API_URL || 'http://localhost:8000').replace('http', 'ws');
+        wsRef.current = new WebSocket(`${wsBase}/ws/interview/${session_id}`);
+        wsRef.current.onmessage = (evt) => {
+            try {
+                const fb = JSON.parse(evt.data);
+                if (fb.tip) setMessages(prev => [...prev, { role: 'ai', text: fb.tip, type: 'realtime' }]);
+            } catch {}
+        };
+        wsRef.current.onerror = () => {};
+        return () => wsRef.current?.close();
+    }, [session_id]);
 
     // TTS FUNCTION with Interruption Control
     const speak = (text, callback) => {
@@ -69,6 +108,7 @@ export default function LiveInterview() {
         const qList = customQuestions || questions;
         const q = qList[index];
         if (!q) return;
+        questionStartTime.current = Date.now();
 
         setMessages(prev => [...prev, { role: 'ai', text: q }]);
         speak(q, () => {
@@ -85,16 +125,18 @@ export default function LiveInterview() {
 
         // STT setup
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (SpeechRecognition) {
-            recognitionRef.current = new SpeechRecognition();
-            recognitionRef.current.continuous = true;
-            recognitionRef.current.interimResults = true;
-            recognitionRef.current.onresult = (e) => {
-                const transcript = Array.from(e.results).map(r => r[0].transcript).join('');
-                setUserInput(transcript);
-            };
-            recognitionRef.current.onend = () => setIsListening(false);
+        if (!SpeechRecognition) {
+            setStatusText("Voice input not supported. Please use text input.");
+            return;
         }
+        recognitionRef.current = new SpeechRecognition();
+        recognitionRef.current.continuous = true;
+        recognitionRef.current.interimResults = true;
+        recognitionRef.current.onresult = (e) => {
+            const transcript = Array.from(e.results).map(r => r[0].transcript).join('');
+            setUserInput(transcript);
+        };
+        recognitionRef.current.onend = () => setIsListening(false);
 
         // Start Sequence
         const initialSkillQuestions = skill_questions || [];
@@ -155,6 +197,7 @@ export default function LiveInterview() {
         toggleListening(false);
         const answer = userInput;
         const currentQ = questions[currentIndex];
+        const timeTaken = (Date.now() - questionStartTime.current) / 1000;
         const isUserAsking = answer.trim().endsWith('?') && answer.trim().split(' ').length < 12;
 
         if (isUserAsking) {
@@ -172,7 +215,7 @@ export default function LiveInterview() {
         try {
             // Get immediate feedback for the current answer
             const res = await api.post('/api/interview/chat', {
-                answer, question: currentQ, context, session_id
+                answer, question: currentQ, context, session_id, time_taken_seconds: timeTaken
             });
 
             const feedback = res.data.reply;
@@ -196,7 +239,8 @@ export default function LiveInterview() {
                         const pivotRes = await api.post('/api/interview/pivot', {
                             history: updatedLog,
                             context,
-                            role
+                            role,
+                            session_id
                         });
                         
                         const followups = pivotRes.data.deep_dives || [];
@@ -249,6 +293,18 @@ export default function LiveInterview() {
     };
 
     const formatTime = (s) => `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`;
+
+    if (questions.length === 0) {
+        return (
+            <div className="h-screen bg-[#030303] text-slate-200 flex items-center justify-center font-sans">
+                <div className="w-full max-w-2xl p-10 rounded-3xl border border-white/10 bg-white/[0.03] space-y-4">
+                    <div className="h-5 w-4/5 rounded bg-white/10 animate-pulse" />
+                    <div className="h-5 w-3/5 rounded bg-white/10 animate-pulse" />
+                    <div className="h-5 w-2/3 rounded bg-white/10 animate-pulse" />
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="h-screen bg-[#030303] text-slate-200 flex overflow-hidden font-sans selection:bg-blue-500/30">
@@ -313,7 +369,7 @@ export default function LiveInterview() {
                                     {isAiSpeaking ? 'Processing Speech...' : 'Awaiting Response...'}
                                 </p>
                             </div>
-                            <p className="text-3xl font-semibold leading-tight text-white italic tracking-tight">"{questions[currentIndex]}"</p>
+                            <p className="text-3xl font-semibold leading-tight text-white italic tracking-tight">"{activeQuestion}"</p>
                         </motion.div>
                     </div>
                 </div>
@@ -342,6 +398,8 @@ export default function LiveInterview() {
                                     m.role === 'ai' 
                                         ? m.type === 'feedback' 
                                             ? 'bg-gradient-to-br from-purple-500/10 to-blue-500/5 border border-purple-500/20 text-purple-100 shadow-[0_0_20px_rgba(168,85,247,0.05)]' 
+                                            : m.type === 'realtime'
+                                                ? 'bg-gradient-to-br from-emerald-500/10 to-cyan-500/5 border border-emerald-500/20 text-emerald-100 shadow-[0_0_20px_rgba(16,185,129,0.05)]'
                                             : 'bg-white/[0.03] border border-white/10 text-blue-50'
                                         : 'bg-blue-600 text-white font-medium shadow-xl'
                                 }`}>

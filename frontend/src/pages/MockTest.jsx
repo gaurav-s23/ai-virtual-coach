@@ -9,7 +9,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 export default function MockTest() {
     const navigate = useNavigate();
-    const user = JSON.parse(localStorage.getItem('user'));
+    let user = null;
+    try { user = JSON.parse(localStorage.getItem('user') || 'null'); } catch {}
 
     // --- APP STATES ---
     const [testState, setTestState] = useState('selection'); 
@@ -44,7 +45,9 @@ export default function MockTest() {
             }
         } catch (e) {
             console.error("Network Error:", e);
-            alert(e.response?.data?.detail || "Server error, try again");
+            const detail = e.response?.data?.detail || e.message || "Server error";
+            const status = e.response?.status || "network";
+            alert(`Quiz failed (${status}): ${detail}`);
         } finally {
             setLoading(false);
         }

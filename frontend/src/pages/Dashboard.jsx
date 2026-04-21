@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { motion } from 'framer-motion';
 import { 
     Zap, Mic, BookOpen, Layout, LogOut,
     Flame, Target, Activity,
@@ -257,6 +258,9 @@ const AttemptCard = ({ icon, label, count, color }) => (
 );
 
 const userEmail = () => {
-    const user = JSON.parse(localStorage.getItem('user'));
-    return user ? user.email.toUpperCase() : "GUEST_CADET";
+    let user = null;
+    try {
+        user = JSON.parse(localStorage.getItem('user') || 'null');
+    } catch {}
+    return user?.email?.toUpperCase() || "GUEST_CADET";
 }

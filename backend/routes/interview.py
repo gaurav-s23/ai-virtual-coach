@@ -4,6 +4,7 @@ import os
 import re
 import uuid
 import logging
+import tempfile
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
@@ -13,6 +14,9 @@ try:
     from ..core.security import get_current_user
     from ..core.rate_limit import enforce_rate_limit
     from ..services.llm_service import generate_chat_feedback, generate_initial_interview, generate_pivot_deepdives
+    from ..services.answer_verifier import verify_answer_relevance
+    from ..services.scoring_service import score_answer_quality
+    from ..services.audio_features import extract_audio_features
     from ..services.rag_service import extract_resume_brief, get_rag_status, queue_resume_embedding
     from ..services.interview_service import (
         append_transcript_turn,
@@ -27,6 +31,9 @@ except ImportError:
     from core.security import get_current_user  # type: ignore
     from core.rate_limit import enforce_rate_limit  # type: ignore
     from services.llm_service import generate_chat_feedback, generate_initial_interview, generate_pivot_deepdives  # type: ignore
+    from services.answer_verifier import verify_answer_relevance  # type: ignore
+    from services.scoring_service import score_answer_quality  # type: ignore
+    from services.audio_features import extract_audio_features  # type: ignore
     from services.rag_service import extract_resume_brief, get_rag_status, queue_resume_embedding  # type: ignore
     from services.interview_service import (  # type: ignore
         append_transcript_turn,
@@ -108,15 +115,29 @@ async def interview_chat(
     if not interview:
         raise HTTPException(status_code=404, detail="Session expired")
 
-    output, readiness_score = await generate_chat_feedback(
+    ai_reply, readiness_score = await generate_chat_feedback(
         question=data.question,
         answer=data.answer,
         context=data.context or interview.resume_context or "",
     )
+    relevance = verify_answer_relevance(data.question, data.answer)
+    quality_score = score_answer_quality(data.question, data.answer)
+    if relevance["verdict"] == "off-topic":
+        ai_reply = "Note: Your answer seems off-topic. " + ai_reply
+    timing_flag = "suspiciously fast" if (data.time_taken_seconds is not None and data.time_taken_seconds < 4) else None
+    if timing_flag:
+        ai_reply = f"{ai_reply}\n\nNote: answer was submitted very quickly and may need deeper verification."
 
-    append_transcript_turn(db=db, interview=interview, user_answer=data.answer, assistant_reply=output)
+    append_transcript_turn(db=db, interview=interview, user_answer=data.answer, assistant_reply=ai_reply)
     logger.info("interview_chat user_id=%s session_id=%s question_idx=%s", current_user.id, session_id, interview.current_question)
-    return {"reply": output, "readiness_score": readiness_score, "state": interview.status}
+    return {
+        "reply": ai_reply,
+        "readiness_score": readiness_score,
+        "state": interview.status,
+        "quality_score": quality_score,
+        "relevance": relevance,
+        "timing_flag": timing_flag,
+    }
 
 
 @router.get("/interview/{session_id}/history")
@@ -149,3 +170,17 @@ async def interview_pivot(data: PivotRequest, _current_user: "models.User" = Dep
     if not result:
         raise HTTPException(status_code=500, detail="Processing failed")
     return result
+
+
+@router.post("/interview/analyze-audio")
+async def analyze_audio(
+    audio: UploadFile = File(...),
+):
+    suffix = os.path.splitext(audio.filename or "")[-1] or ".wav"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        file_path = tmp.name
+        tmp.write(await audio.read())
+    try:
+        return extract_audio_features(file_path)
+    finally:
+        os.unlink(file_path)

@@ -10,8 +10,8 @@ import AdminLogin from './pages/AdminLogin';
 import AdminDashboard from './pages/AdminDashboard';
 
 const ProtectedRoute = ({ children }) => {
-    const user = localStorage.getItem('user'); 
-    return user ? children : <Navigate to="/auth" />;
+    const token = localStorage.getItem('token');
+    return token ? children : <Navigate to="/auth" />;
 };
 
 function App() {

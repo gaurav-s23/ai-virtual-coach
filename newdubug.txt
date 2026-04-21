@@ -1,0 +1,110 @@
+AI Virtual Coach - End-to-End Debug Analysis
+============================================
+
+1) Why screen was not opening / white screen
+-------------------------------------------
+- Dashboard runtime crash:
+  - `frontend/src/pages/Dashboard.jsx` used `motion.div` without importing `motion`.
+  - Result: hard runtime exception after redirect to dashboard, producing white screen.
+
+- Live interview direct URL break:
+  - `frontend/src/pages/LiveInterview.jsx` depended on `location.state` from setup route.
+  - Direct refresh/bookmark access had no state (`session_id`, questions missing), causing non-functional page.
+  - Added redirect guard to `/setup-interview`.
+
+- Unsafe localStorage parse:
+  - `Home.jsx` and `Dashboard.jsx` parsed `localStorage.user` without try/catch.
+  - Corrupted JSON in browser storage could crash pages instantly.
+
+- Weak auth guard:
+  - Route protection relied on presence of `user` object string, not JWT token.
+  - This created inconsistent access behavior and stale-session failures.
+
+2) Interview flow issues found and fixed
+---------------------------------------
+- Unsafe question rendering:
+  - Direct `questions[currentIndex]` access could show blank or undefined before first question.
+  - Added safe fallback plus loading skeleton when question list is empty.
+
+- Speech recognition compatibility:
+  - No explicit browser support message.
+  - Added clear status text fallback for unsupported browsers.
+
+- Multipart upload header conflict:
+  - Global axios `Content-Type: application/json` can break FormData boundary handling.
+  - Removed global content-type default.
+
+- Poor setup failure messaging:
+  - Upload errors were generic and hid status/detail.
+  - Added explicit status + backend detail in alert message.
+
+3) Embedding / routing / CORS issues
+------------------------------------
+- CORS was mostly localhost-focused and deployment-host fragile.
+- Updated backend CORS to use `CORS_ORIGINS` env var list with localhost fallback.
+- No iframe embedding issue found in current app; primary blocker was runtime crash + state dependency.
+
+4) RAG pipeline issues and limitations
+--------------------------------------
+- RAG status was asynchronous and could remain in "processing" while interview starts.
+- If background embedding fails, user experience degrades but interview still proceeds with brief text context.
+- Observed architecture:
+  - resume upload -> queue embedding -> status table update -> retrieval store update.
+- Main risk areas:
+  - Embedding queue retries are limited; failures become `failed`.
+  - Resume brief extraction is lightweight heuristic and may lose detail.
+  - Interview feedback path does not hard-fail when RAG not ready, so quality variance appears.
+
+5) Deep learning gaps and implemented additions
+----------------------------------------------
+- Added answer relevance verification:
+  - `backend/services/answer_verifier.py`
+  - cosine similarity with sentence-transformers.
+
+- Added answer quality scoring:
+  - `backend/services/scoring_service.py`
+  - cross-encoder based relevance/quality score.
+
+- Added suspicious timing signal:
+  - frontend sends `time_taken_seconds`.
+  - backend flags fast answers (<4s) as potentially suspicious.
+
+- Added audio confidence features:
+  - `backend/services/audio_features.py`
+  - MFCC, zero-crossing rate, energy, tempo, confidence estimate.
+  - New endpoint: `POST /api/interview/analyze-audio`.
+
+- Added proctoring:
+  - Frontend tab switch logging.
+  - Backend endpoint `POST /api/proctor/log`.
+  - Logs stored in `backend/data/proctor_logs/{session_id}.json`.
+
+- Added realtime feedback channel:
+  - WebSocket endpoint `GET ws://.../ws/interview/{session_id}`.
+  - Frontend listener appends realtime feedback messages.
+
+6) Remaining operational cautions
+---------------------------------
+- ML models (transformers/sentence-transformers/librosa) are heavier and may need warmup time.
+- WebSocket endpoint currently echoes payload; production feedback generation should be server-driven.
+- Proctor logs are file-based and should migrate to DB for scale and audit consistency.
+
+7) Files touched in this fix pass
+---------------------------------
+- frontend/src/App.jsx
+- frontend/src/services/api.js
+- frontend/src/pages/Home.jsx
+- frontend/src/pages/Dashboard.jsx
+- frontend/src/pages/InterviewSetup.jsx
+- frontend/src/pages/LiveInterview.jsx
+- frontend/src/main.jsx
+- frontend/src/components/ErrorBoundary.jsx
+- frontend/package.json
+- backend/main.py
+- backend/routes/interview.py
+- backend/routes/schemas.py
+- backend/routes/proctor.py
+- backend/services/answer_verifier.py
+- backend/services/scoring_service.py
+- backend/services/audio_features.py
+- backend/requirements.txt

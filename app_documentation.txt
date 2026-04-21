@@ -1,0 +1,649 @@
+================================================================================
+          AI VIRTUAL COACH — APP DOCUMENTATION (COMPREHENSIVE ANALYSIS)
+================================================================================
+Location: repository root (app_documentation.txt)
+
+--------------------------------------------------------------------------------
+SECTION A — PROJECT DIRECTORY TREE
+--------------------------------------------------------------------------------
+
+AI_Virtual_Coach/
+├── .env.example
+├── .gitignore
+├── DEBUG_LOG.md
+├── README.md
+├── app_documentation.txt          (this file)
+├── docker-compose.yml
+├── documentation.txt
+│
+├── backend/
+│   ├── .dockerignore
+│   ├── Dockerfile
+│   ├── __init__.py
+│   ├── ai_engine.py
+│   ├── alembic.ini
+│   ├── conftest.py
+│   ├── database.py
+│   ├── main.py
+│   ├── models.py
+│   ├── pytest.ini
+│   ├── requirements.txt
+│   ├── sitecustomize.py
+│   ├── test_api.py
+│   ├── test_auth_and_persistence.py
+│   ├── test_rag_and_llm.py
+│   ├── agent/
+│   │   ├── __init__.py
+│   │   ├── policy.py
+│   │   ├── session.py
+│   │   └── tools.py
+│   ├── alembic/
+│   │   ├── README
+│   │   ├── env.py
+│   │   ├── script.py.mako
+│   │   └── versions/
+│   │       └── 0001_initial_schema.py
+│   ├── auth/
+│   │   ├── __init__.py
+│   │   └── security.py
+│   ├── llm/
+│   │   ├── __init__.py
+│   │   └── router.py
+│   └── rag/
+│       ├── __init__.py
+│       └── store.py
+│
+└── frontend/
+    ├── .gitignore
+    ├── Dockerfile
+    ├── README.md
+    ├── eslint.config.js
+    ├── index.html
+    ├── nginx.conf
+    ├── package.json
+    ├── package-lock.json
+    ├── postcss.config.js
+    ├── tailwind.config.js
+    ├── vite.config.js
+    ├── public/
+    │   └── icons.svg
+    └── src/
+        ├── App.css
+        ├── App.jsx
+        ├── index.css
+        ├── main.jsx
+        ├── api/
+        │   └── api.js
+        ├── components/
+        │   ├── ErrorState.jsx
+        │   ├── LoadingSpinner.jsx
+        │   ├── SkillBars.jsx
+        │   └── StatCard.jsx
+        ├── pages/
+        │   ├── Auth.jsx
+        │   ├── Dashboard.jsx
+        │   ├── EnglishPractice.jsx
+        │   ├── Evaluation.jsx
+        │   ├── Home.jsx
+        │   ├── InterviewSetup.jsx
+        │   ├── LiveInterview.jsx
+        │   ├── Login.jsx
+        │   └── MockTest.jsx
+        └── services/
+            └── api.js
+
+Note: Runtime/cache dirs (e.g. backend/.chroma, backend/.hf_cache, node_modules)
+      are typically gitignored and not shown above.
+
+--------------------------------------------------------------------------------
+SECTION B — FILE-BY-FILE BREAKDOWN
+--------------------------------------------------------------------------------
+For each file: Purpose | Core Logic | Dependencies (imports / runtime)
+
+--- ROOT ---
+
+.env.example
+  Purpose: Template for environment variables (secrets, DB, JWT, Chroma, Vite).
+  Core Logic: Documents GOOGLE_API_KEY, JWT_* , Postgres, DATABASE_URL, VITE_API_URL,
+              RATELIMIT_ENABLED, CHROMA_DIR, etc.
+  Dependencies: None (documentation-only).
+
+.gitignore
+  Purpose: Exclude secrets, caches, build artifacts, and OS junk from version control.
+  Core Logic: Standard ignore patterns for Python, Node, env files, IDE metadata.
+  Dependencies: None.
+
+DEBUG_LOG.md
+  Purpose: Project-specific debugging notes or log guidance (content may vary).
+  Core Logic: Human-readable debug documentation.
+  Dependencies: None.
+
+README.md
+  Purpose: Quick-start guide for Docker, env vars, auth, RAG, and main API routes.
+  Core Logic: Summarizes stack, compose usage, endpoints, LLM fallback env.
+  Dependencies: None.
+
+docker-compose.yml
+  Purpose: Orchestrate Postgres, Alembic migration job, FastAPI backend, Nginx frontend.
+  Core Logic: Health-checked db → migration service → backend (volumes for .chroma,
+              .hf_cache) → frontend build with optional VITE_API_URL.
+  Dependencies: Docker Engine; images postgres:16-alpine, custom backend/frontend builds.
+
+documentation.txt
+  Purpose: Earlier technical documentation export (architecture, API, security).
+  Core Logic: Narrative docs + Mermaid diagram from codebase analysis.
+  Dependencies: None.
+
+app_documentation.txt
+  Purpose: This comprehensive tree, per-file analysis, cheat sheet, flows, stack.
+  Core Logic: Structured reference for onboarding and interviews.
+  Dependencies: None.
+
+--- BACKEND (root files) ---
+
+backend/.dockerignore
+  Purpose: Reduce Docker build context size; exclude caches and local DB files.
+  Core Logic: Patterns for what not to COPY into the image.
+  Dependencies: Docker build.
+
+backend/Dockerfile
+  Purpose: Production image for FastAPI: Python 3.11-slim, install requirements, uvicorn.
+  Core Logic: apt build deps for psycopg2; pip install from requirements.txt;
+              CMD uvicorn main:app on port 8000; HF cache env vars.
+  Dependencies: requirements.txt; host/network at runtime for DB and LLM APIs.
+
+backend/__init__.py
+  Purpose: Marks backend as a Python package for imports like `from backend.main`.
+  Core Logic: Usually empty package marker.
+  Dependencies: Python package resolution.
+
+backend/main.py
+  Purpose: FastAPI application: all HTTP routes, CORS, rate limits, middleware,
+           exception handlers, interview/RAG/auth/dashboard endpoints.
+  Core Logic: start_interview → upsert_resume + generate_initial_interview + DB row;
+           interview_chat → session_manager agent + transcript persistence;
+           auth routes; SlowAPI optional; JWT deps on protected routes.
+  Dependencies: fastapi, sqlalchemy, PyPDF2, agent.session, rag.store, ai_engine,
+           auth.security, models, database, slowapi (optional).
+
+backend/ai_engine.py
+  Purpose: LLM orchestration for JSON-structured tasks (intro, pivot, quiz, reports)
+           via LiteLLM router.
+  Core Logic: call_llm → complete_with_fallback; clean_json_response regex extraction;
+           generate_initial_interview, generate_pivot_deepdives, generate_neural_quiz,
+           generate_final_report prompts.
+  Dependencies: llm.router (complete_with_fallback), os, asyncio patterns, re, json.
+
+backend/database.py
+  Purpose: SQLAlchemy engine and session factory; SQLite vs Postgres configuration.
+  Core Logic: DATABASE_URL from env; SQLite thread/check args; Postgres pool_size/
+           max_overflow; get_db() generator for FastAPI Depends.
+  Dependencies: sqlalchemy, os, dotenv.
+
+backend/models.py
+  Purpose: ORM models: User, RefreshToken, Interview, MockTest, EnglishSession,
+           Attendance — mirrors Alembic schema.
+  Core Logic: Columns for auth, stats, JSON/JSONB transcript, indexes, relationships.
+  Dependencies: sqlalchemy, database.Base.
+
+backend/requirements.txt
+  Purpose: Pinned Python dependencies for reproducible installs (FastAPI, LangChain,
+           Chroma, torch CPU, litellm, auth libs).
+  Core Logic: Version pins; extra PyTorch index for CPU wheels.
+  Dependencies: pip; used by Dockerfile and local venv.
+
+backend/pytest.ini
+  Purpose: Pytest configuration (markers, asyncio mode, paths).
+  Core Logic: Project test discovery settings.
+  Dependencies: pytest.
+
+backend/sitecustomize.py
+  Purpose: Auto-loaded by Python to isolate pytest from global plugins.
+  Core Logic: Sets PYTEST_DISABLE_PLUGIN_AUTOLOAD default.
+  Dependencies: stdlib os (implicit site loading).
+
+backend/conftest.py
+  Purpose: Pytest hooks: test env defaults and Alembic upgrade/downgrade around session.
+  Core Logic: JWT_SECRET_KEY, RATELIMIT off, in-memory SQLite URL; sessionstart
+           upgrade head; sessionfinish downgrade base.
+  Dependencies: pytest, alembic (optional if installed).
+
+backend/test_api.py
+  Purpose: HTTP/API integration tests for main routes.
+  Core Logic: Exercises endpoints with TestClient or httpx per project conventions.
+  Dependencies: pytest, fastapi test client, backend app.
+
+backend/test_auth_and_persistence.py
+  Purpose: Tests for signup/login/refresh and DB persistence of auth-related data.
+  Core Logic: Validates token flows and models against test DB.
+  Dependencies: pytest, sqlalchemy, auth.security, models.
+
+backend/test_rag_and_llm.py
+  Purpose: Tests for RAG store and/or LLM router behavior.
+  Core Logic: Embedding/chroma or mocked LLM scenarios.
+  Dependencies: pytest, rag.store, llm.router (or mocks).
+
+backend/alembic.ini
+  Purpose: Alembic config file pointing at script_location and DB URL substitution.
+  Core Logic: Logging, migration path, env.py linkage.
+  Dependencies: alembic CLI.
+
+--- backend/agent/ ---
+
+backend/agent/__init__.py
+  Purpose: Package marker for LangChain agent modules.
+  Core Logic: Empty or minimal exports.
+  Dependencies: None significant.
+
+backend/agent/session.py
+  Purpose: SessionManager: builds tool-calling AgentExecutor, ConversationSummaryBufferMemory,
+           per-session state, model fallback loop for invoke().
+  Core Logic: build_agent with system prompt; create/get sessions; ainvoke with
+           LLM_CHAT_FALLBACK_MODELS; seed memory from persisted transcript on restart.
+  Dependencies: langchain_litellm, langchain_classic (agents, memory), tools.build_tools,
+           os, uuid.
+
+backend/agent/tools.py
+  Purpose: LangChain tools: ResumeSearch (Chroma retrieve), PerformanceScorer (heuristic
+           score), FeedbackGenerator (rule-based feedback from score).
+  Core Logic: Pydantic input schemas; retrieve() for RAG; deterministic scoring rubric.
+  Dependencies: langchain_core.tools, pydantic, rag.store.retrieve.
+
+backend/agent/policy.py
+  Purpose: Optional helpers for interview state (discussion detection, short answers).
+  Core Logic: detect_discussion_intent, answer_too_short, steering_prompt — utilities
+           for future or auxiliary steering (not all wired in main routes).
+  Dependencies: stdlib re, typing.
+
+--- backend/auth/ ---
+
+backend/auth/__init__.py
+  Purpose: Auth subpackage marker.
+  Core Logic: Typically empty.
+  Dependencies: None.
+
+backend/auth/security.py
+  Purpose: Password hashing (Argon2/bcrypt), JWT access tokens, opaque refresh tokens,
+           OAuth2 bearer dependency, rate-limit key helper.
+  Core Logic: issue_token_pair inserts hashed refresh; rotate_refresh_token revokes old;
+           get_current_user decodes JWT type=access; hash_refresh_token SHA-256.
+  Dependencies: passlib, jose.jwt, fastapi Depends/HTTPException, sqlalchemy, models.
+
+--- backend/llm/ ---
+
+backend/llm/__init__.py
+  Purpose: LLM package marker.
+  Core Logic: Empty.
+  Dependencies: None.
+
+backend/llm/router.py
+  Purpose: LiteLLM async completion with ordered model fallback and timeouts.
+  Core Logic: complete_with_fallback tries LLM_FALLBACK_MODELS or defaults (Gemini Pro,
+           Flash, Ollama); asyncio.wait_for around litellm.acompletion; LLMResult dataclass.
+  Dependencies: litellm, asyncio, logging, os.
+
+--- backend/rag/ ---
+
+backend/rag/__init__.py
+  Purpose: RAG package marker.
+  Core Logic: Empty.
+  Dependencies: None.
+
+backend/rag/store.py
+  Purpose: Resume PDF → chunks → HuggingFace embeddings → Chroma persistence;
+           similarity_search for tools.
+  Core Logic: upsert_resume uses PyPDFLoader, RecursiveCharacterTextSplitter (1000/150),
+           get_vectorstore per user collection user_{id}_docs; retrieve(query, k).
+  Dependencies: langchain_community, langchain_huggingface, langchain_chroma,
+           chromadb, os, tempfile.
+
+--- backend/alembic/ ---
+
+backend/alembic/README
+  Purpose: Alembic usage notes for maintainers.
+  Core Logic: Text instructions.
+  Dependencies: None.
+
+backend/alembic/env.py
+  Purpose: Alembic runtime: load models metadata, run migrations online/offline.
+  Core Logic: Imports Base and target_metadata from models; run_migrations_* functions.
+  Dependencies: alembic, sqlalchemy, database/engine.
+
+backend/alembic/script.py.mako
+  Purpose: Mako template for autogenerate new revision scripts.
+  Core Logic: Boilerplate upgrade/downgrade stubs.
+  Dependencies: alembic autogenerate.
+
+backend/alembic/versions/0001_initial_schema.py
+  Purpose: Initial migration creating users, refresh_tokens, interviews, mocks, etc.
+  Core Logic: create_table, indexes, downgrade drops.
+  Dependencies: alembic.op, sqlalchemy.
+
+--- FRONTEND ---
+
+frontend/package.json
+  Purpose: NPM manifest: React 19, Vite 8, Tailwind 4, axios, framer-motion, recharts, router.
+  Core Logic: Scripts dev/build/lint/preview; dependency versions.
+  Dependencies: Node.js, npm.
+
+frontend/package-lock.json
+  Purpose: Lockfile for exact transitive dependency versions.
+  Core Logic: Integrity hashes and resolved tree.
+  Dependencies: npm ci / npm install.
+
+frontend/Dockerfile
+  Purpose: Multi-stage: Node builds Vite app; Nginx Alpine serves static files + /api proxy.
+  Core Logic: ARG VITE_API_URL; npm run build; copy dist to nginx; default.conf.
+  Dependencies: node:22-alpine, nginx:alpine.
+
+frontend/nginx.conf
+  Purpose: SPA routing try_files; reverse proxy /api/ to backend:8000 in Compose network.
+  Core Logic: proxy_set_header forwarding; single-page app fallback to index.html.
+  Dependencies: nginx at container runtime.
+
+frontend/index.html
+  Purpose: HTML shell for Vite SPA (root div, script entry).
+  Core Logic: Links to /src/main.jsx.
+  Dependencies: Vite dev server or built assets.
+
+frontend/vite.config.js
+  Purpose: Vite configuration (React plugin, build options).
+  Core Logic: @vitejs/plugin-react, path aliases if any.
+  Dependencies: vite, @vitejs/plugin-react.
+
+frontend/tailwind.config.js
+  Purpose: Tailwind CSS configuration (content paths, theme extensions).
+  Core Logic: Scans src for class names; Tailwind v4 style setup with project.
+  Dependencies: tailwindcss, postcss.
+
+frontend/postcss.config.js
+  Purpose: PostCSS pipeline for Tailwind/autoprefixer.
+  Core Logic: @tailwindcss/postcss plugin chain.
+  Dependencies: postcss, tailwind.
+
+frontend/eslint.config.js
+  Purpose: ESLint flat config for React and hooks rules.
+  Core Logic: Lint rules for src/**/*.jsx.
+  Dependencies: eslint, eslint-plugin-react-hooks.
+
+frontend/README.md
+  Purpose: Frontend-specific readme (if present: dev commands, structure).
+  Core Logic: Local documentation.
+  Dependencies: None.
+
+frontend/.gitignore
+  Purpose: Ignore node_modules, dist, env files for frontend subtree.
+  Core Logic: Node/Vite ignores.
+  Dependencies: None.
+
+frontend/public/icons.svg
+  Purpose: Static SVG asset (icons sprite or illustration).
+  Core Logic: Vector graphics for UI.
+  Dependencies: Referenced from HTML/JSX if used.
+
+frontend/src/main.jsx
+  Purpose: React entry: mount root, import global CSS.
+  Core Logic: createRoot(document.getElementById('root')).render(<App />).
+  Dependencies: react, react-dom, ./App.jsx, ./index.css.
+
+frontend/src/App.jsx
+  Purpose: React Router setup; public routes / and /auth; ProtectedRoute via localStorage
+           'user' for interview, mock, english, dashboard.
+  Core Logic: BrowserRouter, Routes, Navigate fallback.
+  Dependencies: react-router-dom, page components.
+
+frontend/src/App.css
+  Purpose: Legacy or global App-level styles (alongside Tailwind).
+  Core Logic: CSS rules for App component if any.
+  Dependencies: Imported by App.jsx if used.
+
+frontend/src/index.css
+  Purpose: Global styles, Tailwind entry directives, base typography.
+  Core Logic: @import tailwind layers / v4 syntax per project.
+  Dependencies: tailwind, postcss pipeline.
+
+frontend/src/api/api.js
+  Purpose: Axios instance with VITE_API_URL base URL for JSON API calls.
+  Core Logic: axios.create with Content-Type header; export default API.
+  Dependencies: axios, import.meta.env.
+
+frontend/src/services/api.js
+  Purpose: loginUser (POST /api/login, stores token), getDashboardData (Bearer dashboard).
+  Core Logic: Thin API helpers using same axios pattern as api.js.
+  Dependencies: axios, localStorage.
+
+frontend/src/components/LoadingSpinner.jsx
+  Purpose: Reusable loading UI for async pages.
+  Core Logic: Animated or labeled spinner component.
+  Dependencies: react, possibly lucide-react.
+
+frontend/src/components/SkillBars.jsx
+  Purpose: Visualize skill levels (dashboard charts/bars).
+  Core Logic: Maps stats to bar UI; may use Recharts or CSS.
+  Dependencies: react, recharts or custom CSS.
+
+frontend/src/components/ErrorState.jsx
+  Purpose: Error message / retry UI for failed fetches.
+  Core Logic: Props for message and optional retry callback.
+  Dependencies: react.
+
+frontend/src/components/StatCard.jsx
+  Purpose: Card widget for a single statistic on dashboard-style pages.
+  Core Logic: Icon + label + value layout.
+  Dependencies: react, lucide-react (typical).
+
+frontend/src/pages/Home.jsx
+  Purpose: Marketing/landing hub with navigation to interview, dashboard, etc.
+  Core Logic: Framer motion, route buttons, mission copy.
+  Dependencies: react-router-dom, framer-motion, lucide-react.
+
+frontend/src/pages/Login.jsx
+  Purpose: Alternate or legacy login page (if routed separately from Auth).
+  Core Logic: Form and redirect to dashboard on success.
+  Dependencies: axios, react-router-dom, services or direct API.
+
+frontend/src/pages/Auth.jsx
+  Purpose: Login/signup UI; posts to http://127.0.0.1:8000/api/login, stores user in
+           localStorage, reloads.
+  Core Logic: Toggle login/register UI; error alerts for network vs HTTP errors.
+  Dependencies: axios, lucide-react, react-router-dom.
+
+frontend/src/pages/InterviewSetup.jsx
+  Purpose: Upload resume PDF, JD, role; POST /api/start-interview; navigate to live interview
+           with session payload.
+  Core Logic: FormData multipart; passes intro/questions/session_id via route state.
+  Dependencies: axios, react-router-dom.
+
+frontend/src/pages/LiveInterview.jsx
+  Purpose: Live interview UI: chat turns, pivot call, optional final report navigation.
+  Core Logic: POST /api/interview/chat, /api/interview/pivot; may use hardcoded backend URL.
+  Dependencies: axios, react-router-dom, framer-motion/lucide as per file.
+
+frontend/src/pages/Dashboard.jsx
+  Purpose: Skill matrix / stats; fetches /api/dashboard with Bearer token and user_id query.
+  Core Logic: Merges local state with API stats; loading and error handling.
+  Dependencies: axios, recharts, localStorage user/token.
+
+frontend/src/pages/MockTest.jsx
+  Purpose: Mock MCQ flow; calls generate-quiz; navigates to dashboard with state.
+  Core Logic: Category selection, quiz interaction, scoring UX.
+  Dependencies: axios, react-router-dom.
+
+frontend/src/pages/EnglishPractice.jsx
+  Purpose: English topic/questions/report flows hitting /api/english/* endpoints.
+  Core Logic: Multi-step practice UI, transcript or history for report.
+  Dependencies: axios, react-router-dom, UI libraries.
+
+frontend/src/pages/Evaluation.jsx
+  Purpose: Displays “brutal” evaluation report (props or mock defaults) with scores.
+  Core Logic: StatBox grid, feedback and improvements list; framer-motion.
+  Dependencies: react, framer-motion, lucide-react.
+
+--------------------------------------------------------------------------------
+SECTION C — THE "INTERVIEWER" CHEAT SHEET
+--------------------------------------------------------------------------------
+One sentence per major file or folder — usable in a technical interview.
+
+Root / DevOps
+  • docker-compose.yml — “I wire Postgres, a one-shot Alembic migration, the FastAPI
+    container with Chroma/HF volumes, and an Nginx frontend that proxies /api to the API.”
+
+Backend — core
+  • main.py — “This is the FastAPI monolith: routes for interviews, RAG ingestion, JWT
+    auth, rate limits, and transcript persistence to Postgres.”
+  • ai_engine.py — “It’s the non-agent LLM layer: structured JSON prompts for intro,
+    pivot, quizzes, and reports with LiteLLM fallback.”
+  • database.py — “SQLAlchemy creates either a SQLite or Postgres engine with pooling and
+    exposes get_db for dependency injection.”
+  • models.py — “These are the ORM tables: users with stats, hashed refresh tokens,
+    interviews with JSON transcripts, and related mock/english entities.”
+
+Backend — agent & RAG
+  • agent/session.py — “I run a LangChain tool-calling agent with summary memory and
+    automatic model failover for each chat turn.”
+  • agent/tools.py — “Three tools: Chroma resume search, a deterministic readiness
+    scorer, and rule-based feedback tied to that score.”
+  • agent/policy.py — “Helper predicates for discussion intent and answer length—
+    steering hooks for the interview loop.”
+  • rag/store.py — “PDFs are chunked, embedded locally with sentence-transformers, and
+    stored in per-user Chroma collections on disk.”
+
+Backend — integration
+  • llm/router.py — “LiteLLM tries an ordered list of models with asyncio timeouts so
+    one provider failure doesn’t kill the request.”
+  • auth/security.py — “Access tokens are JWTs; refresh tokens are random, SHA-256
+    hashed in Postgres with rotation on refresh.”
+
+Backend — migrations & tests
+  • alembic/ — “Alembic versions schema changes; env.py binds metadata; migrations run
+    in CI/Docker before the app starts.”
+  • conftest.py — “Tests get a disposable in-memory SQLite and automatic migrate up/down
+    around the pytest session.”
+
+Frontend
+  • src/App.jsx — “React Router guards feature routes with a simple localStorage user
+    check redirecting unauthenticated users to /auth.”
+  • src/pages/InterviewSetup.jsx + LiveInterview.jsx — “Setup uploads the resume to
+    trigger RAG indexing; live page streams interview chat and pivot against the API.”
+  • src/pages/Dashboard.jsx — “The dashboard pulls JWT-protected aggregate stats and
+    renders skill visualizations.”
+  • nginx.conf (Docker) — “Nginx serves the SPA and same-origins /api to the backend
+    service so the browser avoids CORS for API calls when VITE_API_URL is empty.”
+
+--------------------------------------------------------------------------------
+SECTION D — SYSTEM FLOW (STEP-BY-STEP)
+--------------------------------------------------------------------------------
+
+D.1 RAG flow (resume indexing and retrieval)
+--------------------------------------------
+  1. Client sends POST /api/start-interview with multipart PDF + form fields (jd, role,
+     user_id).
+  2. main.py validates file size/type; sanitize_filename; reads bytes.
+  3. rag.store.upsert_resume writes PDF to temp path; PyPDFLoader loads documents.
+  4. Metadata (user_id, source, filename) attached; RecursiveCharacterTextSplitter
+     produces chunks (1000 chars, 150 overlap).
+  5. HuggingFaceEmbeddings (CPU, normalized) embed each chunk; Chroma collection
+     user_{user_id}_docs persists vectors under CHROMA_DIR.
+  6. Extracted plain text (preview) feeds ai_engine.generate_initial_interview for
+     intro + questions (LLM JSON).
+  7. session_manager creates in-memory agent session; SQLAlchemy Interview row inserted
+     with new session_id.
+  8. Later, during POST /api/interview/chat, the agent may invoke ResumeSearch tool,
+     which calls rag.store.retrieve(user_id, query, k) → similarity_search in Chroma
+     and returns top text chunks to the LLM.
+
+D.2 Authentication flow (signup, login, JWT access, refresh rotation)
+--------------------------------------------------------------------
+  1. Signup: POST /api/auth/signup with email/password → password validated and hashed
+     with Argon2 → new User row; returns id/email/name (no tokens in this handler).
+  2. Login: POST /api/auth/login → lookup User by email → verify_password against
+     stored hash (Argon2 or legacy bcrypt) → issue_token_pair.
+  3. issue_token_pair: create_access_token (JWT: sub=user id, type=access, exp) +
+     generate opaque refresh token → SHA-256 hash stored in refresh_tokens with
+     expires_at; commit → return access_token, refresh_token, expires_in to client.
+  4. Protected API: Client sends Authorization: Bearer <access_jwt>; OAuth2PasswordBearer
+     extracts token; jwt.decode with JWT_SECRET_KEY; require type=access; load User;
+     inject request.state.user_id for rate limiting.
+  5. Access expiry: Client calls POST /api/auth/refresh with JSON { refresh_token }.
+  6. auth_refresh: hash body token; find RefreshToken row by token_hash; verify user;
+     rotate_refresh_token marks old row revoked (revoked_at), issues new pair via
+     issue_token_pair (new refresh hash row).
+  7. Legacy POST /api/login: same user lookup or auto-register; returns token fields
+     compatible with older clients storing `token` or access_token.
+
+--------------------------------------------------------------------------------
+SECTION E — TECHNICAL STACK SUMMARY (WHY EACH TOOL)
+--------------------------------------------------------------------------------
+
+Frontend — React + Vite
+  Industry-standard component model and fast HMR/builds; Vite keeps iteration quick
+  and outputs static assets ideal for Nginx hosting.
+
+React Router
+  Client-side routing for a multi-page feel without server round-trips; supports
+  protected routes for authenticated flows.
+
+Tailwind CSS
+  Rapid, consistent UI with utility classes; pairs well with design iteration for
+  dashboards and interview UIs.
+
+Axios
+  Mature HTTP client for JSON, interceptors, and straightforward Bearer header usage
+  from the browser.
+
+Nginx (in Docker)
+  Serves the SPA, handles client-side route fallback, and reverse-proxies /api to
+  FastAPI—enabling same-origin API calls and simpler CORS in production.
+
+Backend — FastAPI
+  Async-capable API framework with automatic OpenAPI docs, Pydantic validation, and
+  clean dependency injection for DB sessions and auth.
+
+SQLAlchemy + Alembic
+  Portable ORM for Postgres/SQLite and versioned schema migrations—required for
+  production data integrity and refresh-token storage.
+
+PostgreSQL (Compose)
+  Robust relational DB for concurrent access, JSON/JSONB for transcripts, and indexed
+  lookups on session_id and token_hash.
+
+ChromaDB
+  Embedded vector store with filesystem persistence—no separate vector DB service for
+  development and small deployments.
+
+sentence-transformers / HuggingFace
+  Local CPU embeddings avoid per-token embedding API costs and keep resume text
+  processing on-premise within the backend container.
+
+LangChain (agents, memory, Chroma integration)
+  Standard abstractions for tool-calling agents, conversation memory, and vector
+  store adapters—reduces glue code between retrieval and Gemini.
+
+LiteLLM
+  Single interface to multiple model providers with a configurable fallback chain—
+  resilience when Gemini is rate-limited or unavailable.
+
+Google Gemini (via GOOGLE_API_KEY)
+  Strong general-purpose LLM for JSON interview tasks and agent replies; chosen as
+  primary cloud model in env and README.
+
+PyPDF / LangChain loaders
+  Reliable PDF text extraction path for resumes before chunking.
+
+JWT (python-jose) + opaque refresh tokens
+  Stateless short-lived access tokens for APIs; server-side revocable refresh tokens
+  stored hashed—balances performance and security.
+
+Argon2 (passlib)
+  Modern password hashing default with backward compatibility for bcrypt hashes.
+
+SlowAPI
+  Optional rate limiting to protect auth and expensive endpoints from abuse.
+
+Docker / Compose
+  Reproducible stacks for DB, migrations, API, and frontend—onboarding and CI align
+  with the same topology.
+
+================================================================================
+END OF app_documentation.txt
+================================================================================

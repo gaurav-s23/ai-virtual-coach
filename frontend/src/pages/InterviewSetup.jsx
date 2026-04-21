@@ -76,7 +76,9 @@ export default function InterviewSetup() {
         } 
       });
     } catch (err) {
-      alert("Resume failed");
+      const status = err?.response?.status;
+      const detail = err?.response?.data?.detail || err.message;
+      alert(`Setup failed (${status || 'network'}): ${detail || 'Please retry'}`);
     } finally {
       setLoading(false);
     }
