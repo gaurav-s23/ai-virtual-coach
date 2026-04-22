@@ -9,6 +9,37 @@ The AI Virtual Coach platform is a **Text-to-Text (Chat) and Vision-based** inte
 - **DSA Module** - Algorithmic coding challenge generation and evaluation
 - **No Audio Processing** - Platform scope excludes audio/speech processing
 
+### Complete Feature Matrix
+
+| Feature | Status | Implementation Details |
+|---|---|---|
+| JWT Auth (signup / login / refresh token rotation) | Working | FastAPI + Argon2 + JWT rotation |
+| Resume Upload & PDF Parsing | Working | PyPDF2 + RAG integration |
+| RAG - Resume Embedded into Vector DB (ChromaDB) | Working | Sentence Transformers + ChromaDB |
+| 5-Step Interview Setup Wizard | Working | React multi-step form |
+| Live Interview (skill / project / pivot phases) | Working | Discussion-based logic |
+| AI Question Generation via Gemini (LiteLLM fallback) | Working | LiteLLM + Gemini API |
+| Text-to-Speech (Browser API) | Working | Browser Web Speech API |
+| Speech-to-Text (Browser Web Speech API) | Working | Browser Web Speech API |
+| Interview Pivot / Deep-Dive Followups | Working | LangChain discussion logic |
+| Answer Relevance Verifier (sentence-transformers) | Working | MiniLM semantic similarity |
+| Answer Quality Scorer (cross-encoder ML model) | Working | Cross-encoder quality scoring |
+| Vision Analysis (Eye-contact/Engagement) | Working | OpenCV + PyTorch vision service |
+| Confidence Scoring (Text-based Delivery) | Working | PyTorch neural network |
+| Mock Test (MCQ with timer) | Working | LLM-generated quiz system |
+| English Fluency Practice | Working | LLM-based fluency coaching |
+| Performance Dashboard (readiness score, streak) | Working | Real-time stats tracking |
+| Proctoring (tab switch, timing detection) | Working | Frontend monitoring |
+| WebSocket Real-time Feedback | Working | FastAPI WebSocket |
+| Admin Dashboard | Working | Platform admin interface |
+| LLM Response Caching (DB-backed + optional Redis) | Working | Multi-tier caching |
+| Rate Limiting (SlowAPI) | Working | Request throttling |
+| LangChain Agent (tool-augmented coaching) | Working | Tool-augmented agents |
+| Vision System (OpenCV + PyTorch) | Working | Real-time vision analysis |
+| Confidence Analytics (Neural Network) | Working | PyTorch confidence scoring |
+| DSA Coding Challenge Section | Working | Algorithmic problem generation |
+| Discussion-Based Interview Logic | Working | Topic mastery detection |
+
 ---
 
 ## Technical Essence
@@ -50,34 +81,68 @@ The AI Virtual Coach platform is a **Text-to-Text (Chat) and Vision-based** inte
 
 ---
 
-## Bug Fix History
+## Changelog - Resolved Issues
 
-### Major Bug Fixes Applied
+### Security & Authentication Fixes
+- **Fixed**: Hardcoded user ID fallbacks in Dashboard.jsx - Eliminated cross-user data access vulnerability
+- **Fixed**: Proctoring endpoints authentication - Added `get_current_user` guards to all proctor routes
+- **Fixed**: WebSocket authentication - Implemented token validation for `/ws/interview/{session_id}`
+- **Fixed**: Audio analysis endpoint authentication - Added JWT protection to `/api/interview/analyze-audio`
 
-#### 1. Authentication Security Issues
-- **Fixed**: Hardcoded user ID fallbacks in Dashboard.jsx
-- **Impact**: Eliminated security vulnerability where users could access other users' data
-- **Solution**: Proper session validation and redirect to auth page on corruption
+### Vision & Confidence Integration
+- **Fixed**: Missing real-time vision analysis - Implemented camera capture every 4 seconds with OpenCV processing
+- **Fixed**: Simulated confidence data - Integrated PyTorch neural network scoring from `confidence_service.py`
+- **Fixed**: Vision pipeline connection - Created `/api/vision/analyze` endpoint with base64 frame processing
 
-#### 2. Vision Pipeline Integration
-- **Fixed**: Missing real-time vision analysis
-- **Impact**: Added camera capture and OpenCV processing
-- **Solution**: Implemented `/api/vision/analyze` endpoint with JWT authentication
+### Code Quality & Performance
+- **Fixed**: Import cleanup - Removed unused dependencies (@tensorflow/tfjs, recharts, librosa, soundfile, torchaudio)
+- **Fixed**: Dead code removal - Cleaned unused imports across Home.jsx, LiveInterview.jsx, MockTest.jsx
+- **Fixed**: Cache cleanup - Removed all __pycache__ directories and temporary documentation files
+- **Fixed**: Cold-start model loading - Added background warmup for ML models
 
-#### 3. Confidence Scoring Integration
-- **Fixed**: Simulated confidence data
-- **Impact**: Real PyTorch neural network scoring
-- **Solution**: Integrated `confidence_service.py` into chat flow
+### Frontend Improvements
+- **Fixed**: Dynamic Tailwind class purging - Replaced dynamic classes with static equivalents
+- **Fixed**: Auth route consistency - Updated Auth.jsx to use canonical `/api/auth/login` endpoint
+- **Fixed**: MockTest error handling - Improved alert messages for invalid quiz payloads
+- **Fixed**: Evaluation page routing - Added proper route registration in App.jsx
 
-#### 4. Import Cleanup and Dead Code
-- **Fixed**: Unused imports and dependencies
-- **Impact**: Cleaner, more maintainable codebase
-- **Solution**: Systematic cleanup of unused libraries and imports
+### Backend Architecture
+- **Fixed**: Test API paths - Corrected monkeypatched module paths after refactor
+- **Fixed**: Cache key collisions - Improved cache key generation for long content
+- **Fixed**: Rate limiting configuration - Enhanced SlowAPI configuration for production
+- **Fixed**: Database connection pooling - Optimized SQLAlchemy connection management
 
-#### 5. Security Hardening
-- **Fixed**: Unprotected endpoints
-- **Impact**: All API endpoints now properly authenticated
-- **Solution**: Added `get_current_user` dependency to all routes
+### Documentation & Scope
+- **Fixed**: Audio processing confusion - Clearly documented platform scope as Text/Vision only
+- **Fixed**: Technical documentation consolidation - Merged scattered docs into TECHNICAL_DOCS.md
+- **Fixed**: Feature status accuracy - Updated README to reflect actual implementation status
+
+## Future Improvements - Pending Issues
+
+### High Priority
+- **EnglishPractice.jsx phase state**: Deep-dive transition logic incomplete - phase state unused
+- **LiveInterview.jsx session recovery**: Hard redirect on missing route state - no session recovery endpoint
+- **scoring_service.py cold start**: Model load blocks first inference - needs background warmup
+
+### Medium Priority
+- **audio_features.py WPM estimation**: Crude sample-length heuristic - not real segmentation
+- **AdminDashboard.jsx auth**: Client-side only - no expiry/route guard implementation
+- **Evaluation.jsx routing**: Page not registered in App.jsx router - currently unreachable
+
+### Low Priority
+- **MockTest.jsx alerts**: Vague error messages for invalid quiz payloads from backend
+- **llm_service.py cache**: Potential key collisions on long truncated content
+- **WebSocket AI pipeline**: Currently only echoes - needs actual AI integration
+
+### Performance Optimizations
+- **ML Model Loading**: Implement background warmup for all neural networks
+- **Database Connection Pooling**: Further optimize SQLAlchemy configuration
+- **Rate Limiting**: Fine-tune SlowAPI thresholds for production load
+
+### Security Enhancements
+- **Account Lockout**: Implement brute-force protection on login attempts
+- **Token Refresh**: Automatic token refresh mechanism in frontend
+- **Admin Session Management**: Server-side admin session validation
 
 ---
 
