@@ -128,7 +128,8 @@ async def test_start_interview_returns_session_id(monkeypatch):
     async def _override_get_current_user():
         return _User()
 
-    app.dependency_overrides[main_module.get_current_user] = _docker compose up --build
+    app.dependency_overrides[main_module.get_current_user] = _override_get_current_user
+    try:
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             files = {"resume": ("resume.pdf", b"%PDF-1.4\\n" + (b"x" * 200), "application/pdf")}
@@ -142,5 +143,3 @@ async def test_start_interview_returns_session_id(monkeypatch):
         assert len(payload.get("project_questions", [])) == 5
     finally:
         app.dependency_overrides.clear()
-
-

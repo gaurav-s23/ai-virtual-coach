@@ -6,6 +6,7 @@ import LiveInterview from './pages/LiveInterview';
 import Dashboard from './pages/Dashboard';           
 import MockTest from './pages/MockTest'; 
 import EnglishPractice from './pages/EnglishPractice';
+import Evaluation from './pages/Evaluation';
 import AdminLogin from './pages/AdminLogin';
 import AdminDashboard from './pages/AdminDashboard';
 
@@ -74,6 +75,12 @@ function App() {
                 <Route path="/dashboard" element={
                     <ProtectedRoute> <Dashboard /> </ProtectedRoute>
                 } />
+
+                {/* --- EVALUATION PAGE --- */}
+                <Route path="/evaluation/:sessionId" element={
+                    <ProtectedRoute> <Evaluation /> </ProtectedRoute>
+                } />
+
                 <Route path="/admin/login" element={<AdminLogin />} />
                 <Route path="/admin" element={<AdminDashboard />} />
 

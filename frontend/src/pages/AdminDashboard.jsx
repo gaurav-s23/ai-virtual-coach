@@ -14,8 +14,36 @@ export default function AdminDashboard() {
 
   const adminToken = localStorage.getItem("admin_token");
 
+  // Check if admin token is valid and not expired
+  const validateAdminToken = (token) => {
+    if (!token) return false;
+    
+    try {
+      // Basic JWT validation for admin token
+      const parts = token.split('.');
+      if (parts.length !== 3) return false;
+      
+      const payload = JSON.parse(atob(parts[1]));
+      const currentTime = Date.now() / 1000;
+      
+      // Check if token has admin role and is not expired
+      return payload.isAdmin === true && payload.exp > currentTime;
+    } catch (error) {
+      console.error('Token validation failed:', error);
+      return false;
+    }
+  };
+
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [tokenValid, setTokenValid] = useState(false);
+
   useEffect(() => {
-    if (!adminToken) {
+    const isValid = validateAdminToken(adminToken);
+    setTokenValid(isValid);
+    setIsAdmin(isValid);
+    
+    if (!isValid) {
+      localStorage.removeItem("admin_token");
       navigate("/admin/login");
     }
   }, [adminToken, navigate]);
@@ -31,7 +59,7 @@ export default function AdminDashboard() {
   };
 
   useEffect(() => {
-    if (!adminToken) {
+    if (!tokenValid || !isAdmin) {
       return;
     }
     const headers = { Authorization: `Bearer ${adminToken}` };
@@ -39,9 +67,9 @@ export default function AdminDashboard() {
       api.get("/api/admin/stats", { headers }),
       api.get(`/api/admin/users?limit=${pageSize}&offset=${page * pageSize}`, { headers }),
     ])
-      .then(([s, u]) => {
-        setStats(s.data);
-        setUsers(u.data || []);
+      .then(([statsRes, usersRes]) => {
+        setStats(statsRes.data);
+        setUsers(usersRes.data || []);
       })
       .catch((error) => {
         if (!handleAuthError(error)) {
@@ -50,7 +78,7 @@ export default function AdminDashboard() {
         }
       })
       .finally(() => setLoading(false));
-  }, [adminToken, navigate, page, pageSize]);
+  }, [tokenValid, isAdmin, adminToken, navigate, page, pageSize]);
 
   const logout = () => {
     localStorage.removeItem("admin_token");

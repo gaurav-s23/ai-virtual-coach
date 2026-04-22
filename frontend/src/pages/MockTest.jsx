@@ -41,7 +41,7 @@ export default function MockTest() {
                 setCurrentIndex(0);
                 setTimeLeft(1200);
             } else {
-                alert("Server error, try again");
+                alert("Failed to generate quiz questions. Please check your API key or try a different category.");
             }
         } catch (e) {
             console.error("Network Error:", e);

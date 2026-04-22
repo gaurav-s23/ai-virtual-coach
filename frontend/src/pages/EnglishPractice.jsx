@@ -125,11 +125,19 @@ export default function EnglishPractice() {
         try {
             // After 5 primary questions, transition into deep-dive round.
             if (currentIndex === 4 && phase === 'primary') {
+                // Generate deep-dive questions based on user's performance
+                const deepDiveRes = await api.post('/api/english/questions', { 
+                    topic, 
+                    phase: 'deepdive',
+                    history: currentMsgBatch 
+                });
+                
                 setPhase('deepdive');
                 setCurrentIndex(0);
-                const deepDiveIntro = "Primary round complete. Now entering deep-dive round.";
-                setMessages(prev => [...prev, { role: 'ai', text: deepDiveIntro }, { role: 'ai', text: questions[0] }]);
-                speak(`${deepDiveIntro} ${questions[0]}`, () => toggleListening(true));
+                setQuestions(deepDiveRes.data.questions);
+                const deepDiveIntro = "Primary round complete. Now entering deep-dive round with targeted follow-up questions.";
+                setMessages(prev => [...prev, { role: 'ai', text: deepDiveIntro }, { role: 'ai', text: deepDiveRes.data.questions[0] }]);
+                speak(`${deepDiveIntro} ${deepDiveRes.data.questions[0]}`, () => toggleListening(true));
             } 
             // If 5 deep-dives are done, generate report
             else if (currentIndex === 4 && phase === 'deepdive') {

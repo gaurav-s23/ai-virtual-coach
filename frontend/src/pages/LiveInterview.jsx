@@ -8,20 +8,23 @@ export default function LiveInterview() {
     const location = useLocation();
     const navigate = useNavigate();
 
-    // Initial data from setup
-    const {
+    // --- STATE FROM ROUTE ---
+    const { 
+        session_id = null,
         skill_questions = [],
         project_questions = [],
-        followup_questions = [],
-        intro = "System initialized.",
-        context = "",
-        role = "",
-        session_id = null,
+        jd_text = "",
+        resume_text = "",
+        role = "Software Engineer",
         candidate_name = "Candidate",
         interview_status = "starting",
         countdown_seconds = 8,
         duration = "30 mins",
     } = location.state || {};
+
+    const [sessionRecovered, setSessionRecovered] = useState(false);
+    const [sessionLoading, setSessionLoading] = useState(false);
+    const [sessionError, setSessionError] = useState(null);
 
     const hasValidSession = !!session_id && !!skill_questions?.length;
 
@@ -67,6 +70,31 @@ export default function LiveInterview() {
     const logProctorEvent = async (event_type) => {
         try { await api.post('/api/proctor/log', { session_id, event_type, timestamp: new Date().toISOString() }); }
         catch {}
+    };
+
+    const recoverSession = async () => {
+        setSessionLoading(true);
+        setSessionError(null);
+        try {
+            const token = localStorage.getItem('token');
+            const response = await api.get('/api/interview/recover-session', {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            
+            if (response.data && response.data.session_id) {
+                const recoveredSession = response.data;
+                setSessionRecovered(true);
+                // Update component state with recovered session data
+                window.location.href = `/live-interview?session=${recoveredSession.session_id}`;
+            } else {
+                setSessionError('No active session found');
+            }
+        } catch (error) {
+            console.error('Session recovery failed:', error);
+            setSessionError('Failed to recover session. Please start a new interview.');
+        } finally {
+            setSessionLoading(false);
+        }
     };
 
     // D. AUTO-SCROLL LOGIC
@@ -371,16 +399,43 @@ export default function LiveInterview() {
 
     if (!hasValidSession) {
         return (
-            <div className="h-screen bg-[#030303] text-slate-200 flex items-center justify-center font-sans p-6">
+            <div className="h-screen bg-slate-900 text-slate-200 flex items-center justify-center font-sans p-6">
                 <div className="w-full max-w-xl p-10 rounded-3xl border border-white/10 bg-white/[0.03] text-center space-y-6">
-                    <h2 className="text-3xl font-black text-white">Session not found</h2>
-                    <p className="text-slate-400">Session not found. Please start a new interview.</p>
-                    <button
-                        onClick={() => navigate('/setup-interview')}
-                        className="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold"
-                    >
-                        Start New Interview
-                    </button>
+                    <h2 className="text-3xl font-black text-white">Session Expired</h2>
+                    <p className="text-slate-400">
+                        {sessionError || "Session not found or expired. Would you like to try recovering your last active session?"}
+                    </p>
+                    
+                    {sessionLoading ? (
+                        <div className="flex items-center justify-center gap-2">
+                            <Loader2 className="animate-spin" size={20} />
+                            <span>Recovering session...</span>
+                        </div>
+                    ) : (
+                        <div className="space-y-3">
+                            <button
+                                onClick={recoverSession}
+                                className="w-full px-6 py-3 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl font-bold transition-colors"
+                            >
+                                Recover Last Session
+                            </button>
+                            <button
+                                onClick={() => navigate('/setup-interview')}
+                                className="w-full px-6 py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-xl font-bold transition-colors"
+                            >
+                                Start New Interview
+                            </button>
+                        </div>
+                    )}
+                    
+                    {sessionError && (
+                        <button
+                            onClick={() => navigate('/dashboard')}
+                            className="w-full px-6 py-2 text-slate-400 hover:text-white text-sm transition-colors"
+                        >
+                            Return to Dashboard
+                        </button>
+                    )}
                 </div>
             </div>
         );

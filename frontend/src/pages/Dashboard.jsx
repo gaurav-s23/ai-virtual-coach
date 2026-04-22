@@ -121,14 +121,14 @@ export default function Dashboard() {
     }, []);
 
     return (
-        <div className="flex h-screen bg-[#020617] text-slate-200 font-sans overflow-hidden relative">
+        <div className="flex h-screen bg-slate-900 text-slate-200 font-sans overflow-hidden relative">
             
             {/* --- BACKGROUND --- */}
             <div className="absolute inset-0 z-0">
                 <div className="absolute top-[-10%] left-[-10%] w-[60%] h-[60%] bg-cyan-600/10 blur-[140px] rounded-full animate-pulse" />
                 <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-blue-600/10 blur-[140px] rounded-full animate-pulse" />
-                <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(6,182,212,0.10),transparent_45%),radial-gradient(circle_at_80%_30%,rgba(59,130,246,0.10),transparent_45%),radial-gradient(circle_at_50%_80%,rgba(139,92,246,0.10),transparent_50%)] pointer-events-none" />
-                <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-[0.025] pointer-events-none" />
+                <div className="absolute inset-0 bg-gradient-to-br from-cyan-900/10 via-transparent to-blue-900/10 pointer-events-none" />
+                <div className="absolute inset-0 bg-gradient-to-tl from-purple-900/10 via-transparent to-indigo-900/10 pointer-events-none" />
             </div>
 
             {/* --- SIDEBAR --- */}
@@ -159,7 +159,7 @@ export default function Dashboard() {
                     {/* TOP HEADER */}
                     <header className="flex justify-between items-end">
                         <div>
-                            <p className="text-cyan-500 font-mono text-[10px] uppercase tracking-[0.4em] mb-2 font-black">System Ready: {userEmail()}</p>
+                            <p className="text-cyan-500 font-mono text-xs uppercase tracking-wider mb-2 font-black">System Ready: {userEmail()}</p>
                             <h1 className="text-5xl font-black text-white tracking-tighter">Command Centre</h1>
                         </div>
                         <div className="flex gap-4">
@@ -223,7 +223,7 @@ export default function Dashboard() {
                             <SkillBars skills={stats.skills} />
                             <div className="mt-6 bg-gradient-to-br from-cyan-600/90 to-blue-700/90 p-8 rounded-[2.5rem] shadow-xl relative overflow-hidden group border border-white/10">
                                 <Cpu className="absolute -right-4 -bottom-4 w-32 h-32 text-white/10 group-hover:scale-110 transition-transform" />
-                                <p className="text-[10px] font-black text-cyan-100 uppercase tracking-widest mb-2">Next Milestone</p>
+                                <p className="text-xs font-black text-cyan-100 uppercase tracking-widest mb-2">Next Milestone</p>
                                 <h4 className="text-2xl font-black text-white italic">Technical Principal</h4>
                                 <p className="text-cyan-100/70 text-xs mt-4 leading-relaxed font-medium">
                                     Complete 5 more high-score interviews to unlock advanced system design probes.
@@ -257,7 +257,7 @@ const StatPill = ({ icon, label, value, color }) => (
     <div className={`${(colorMap[color] || colorMap.cyan).bg} ${(colorMap[color] || colorMap.cyan).border} px-6 py-4 rounded-[2rem] flex items-center gap-4`}>
         <div className={(colorMap[color] || colorMap.cyan).text}>{icon}</div>
         <div>
-            <p className={`text-[9px] font-black ${(colorMap[color] || colorMap.cyan).textMuted} uppercase tracking-widest leading-none`}>{label}</p>
+            <p className={`text-xs font-black ${(colorMap[color] || colorMap.cyan).textMuted} uppercase tracking-widest leading-none`}>{label}</p>
             <p className="text-xl font-black font-mono leading-none mt-1.5 text-white">{value}</p>
         </div>
     </div>
