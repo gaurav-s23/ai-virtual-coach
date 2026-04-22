@@ -24,6 +24,8 @@ try:
         create_interview_session,
         interview_payload,
     )
+    from ..services.discussion_service import process_discussion_first_interview
+    from ..services.confidence_service import analyze_confidence
     from .schemas import ChatRequest, ChatResponse, PivotRequest, PivotResponse, StartInterviewResponse
 except ImportError:
     import models  # type: ignore
@@ -115,21 +117,61 @@ async def interview_chat(
     if not interview:
         raise HTTPException(status_code=404, detail="Session expired")
 
-    ai_reply, readiness_score = await generate_chat_feedback(
+    # Get existing discussion state from interview metadata
+    discussion_state = None
+    if interview.transcript and len(interview.transcript) > 0:
+        try:
+            # Try to get discussion state from the last transcript entry
+            last_entry = interview.transcript[-1]
+            if isinstance(last_entry, dict) and "discussion_state" in last_entry:
+                discussion_state = last_entry["discussion_state"]
+        except Exception:
+            discussion_state = None
+
+    # Use Discussion-First logic
+    ai_reply, updated_discussion_state = await process_discussion_first_interview(
+        question=data.question,
+        answer=data.answer,
+        context=data.context or interview.resume_context or "",
+        discussion_state=discussion_state
+    )
+
+    # Get traditional metrics for compatibility
+    relevance = verify_answer_relevance(data.question, data.answer)
+    quality_score = score_answer_quality(data.question, data.answer)
+    
+    # Get real confidence analysis from PyTorch model
+    confidence_analysis = await analyze_confidence(data.answer)
+    
+    # Get readiness score from traditional method for compatibility
+    _, readiness_score = await generate_chat_feedback(
         question=data.question,
         answer=data.answer,
         context=data.context or interview.resume_context or "",
     )
-    relevance = verify_answer_relevance(data.question, data.answer)
-    quality_score = score_answer_quality(data.question, data.answer)
+    
+    # Add off-topic warning if needed
     if relevance["verdict"] == "off-topic":
         ai_reply = "Note: Your answer seems off-topic. " + ai_reply
+    
+    # Add timing flag if needed
     timing_flag = "suspiciously fast" if (data.time_taken_seconds is not None and data.time_taken_seconds < 4) else None
     if timing_flag:
         ai_reply = f"{ai_reply}\n\nNote: answer was submitted very quickly and may need deeper verification."
 
-    append_transcript_turn(db=db, interview=interview, user_answer=data.answer, assistant_reply=ai_reply)
-    logger.info("interview_chat user_id=%s session_id=%s question_idx=%s", current_user.id, session_id, interview.current_question)
+    # Append transcript with discussion state
+    transcript_entry = {
+        "user_answer": data.answer,
+        "assistant_reply": ai_reply,
+        "question": data.question,
+        "discussion_state": updated_discussion_state
+    }
+    append_transcript_turn(db=db, interview=interview, **transcript_entry)
+    
+    logger.info("interview_chat user_id=%s session_id=%s question_idx=%s discussion_rounds=%s", 
+                current_user.id, session_id, interview.current_question, 
+                updated_discussion_state.get("discussion_rounds", 0))
+    
     return {
         "reply": ai_reply,
         "readiness_score": readiness_score,
@@ -137,6 +179,9 @@ async def interview_chat(
         "quality_score": quality_score,
         "relevance": relevance,
         "timing_flag": timing_flag,
+        "discussion_state": updated_discussion_state,  # Add discussion state to response
+        "confidence_score": confidence_analysis.get("confidence_score", readiness_score),  # Add real confidence score
+        "confidence_features": confidence_analysis.get("features", {})  # Add confidence features
     }
 
 
@@ -175,6 +220,7 @@ async def interview_pivot(data: PivotRequest, _current_user: "models.User" = Dep
 @router.post("/interview/analyze-audio")
 async def analyze_audio(
     audio: UploadFile = File(...),
+    current_user: "models.User" = Depends(get_current_user),
 ):
     suffix = os.path.splitext(audio.filename or "")[-1] or ".wav"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:

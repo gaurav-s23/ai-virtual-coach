@@ -2,13 +2,37 @@ import axios from 'axios';
 
 // In local dev, fallback to backend container port if env is missing.
 const DEFAULT_API_URL = "http://localhost:8000";
-export const API_BASE = (import.meta?.env?.VITE_API_URL ?? DEFAULT_API_URL).replace(/\/$/, "");
+
+// Validate and construct API base URL
+const getValidApiUrl = () => {
+    const envUrl = import.meta?.env?.VITE_API_URL?.trim();
+    const apiUrl = envUrl || DEFAULT_API_URL;
+    
+    // Basic URL validation
+    try {
+        const url = new URL(apiUrl);
+        // Only allow http/https protocols
+        if (!['http:', 'https:'].includes(url.protocol)) {
+            console.warn('Invalid API URL protocol, falling back to default');
+            return DEFAULT_API_URL;
+        }
+        // Remove trailing slash
+        return apiUrl.replace(/\/$/, '');
+    } catch (error) {
+        console.warn('Invalid API URL format, falling back to default:', error);
+        return DEFAULT_API_URL;
+    }
+};
+
+export const API_BASE = getValidApiUrl();
 
 const api = axios.create({
-    baseURL: API_BASE
+    baseURL: API_BASE,
+    timeout: 10000, // 10 second timeout
 });
 
-api.interceptors.request.use((config) => {
+// Add connectivity check
+api.interceptors.request.use(async (config) => {
     const token = localStorage.getItem("token");
     if (token) {
         config.headers = config.headers || {};
@@ -23,9 +47,13 @@ api.interceptors.response.use(
         const config = error.config || {};
         const status = error?.response?.status;
         config.__retryCount = config.__retryCount || 0;
-        if (status === 503 && config.__retryCount < 2) {
+        
+        // Retry on server errors and some auth errors (might be transient)
+        if ((status === 503 || status === 401 || status === 403) && config.__retryCount < 2) {
             config.__retryCount += 1;
-            await new Promise((resolve) => setTimeout(resolve, 400 * config.__retryCount));
+            // For auth errors, wait a bit longer before retry
+            const delay = (status === 401 || status === 403) ? 800 : 400;
+            await new Promise((resolve) => setTimeout(resolve, delay * config.__retryCount));
             return api(config);
         }
         return Promise.reject(error);

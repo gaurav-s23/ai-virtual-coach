@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
 import { 
     Zap, BrainCircuit, Loader2, Target, Clock, ChevronLeft, 
-    ChevronRight, Send, BarChart3
+    ChevronRight, Send, BarChart3, ArrowLeft, Square
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -131,8 +131,8 @@ export default function MockTest() {
                         <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.5em] mt-4">AI Assessment Protocol v2.5</p>
                     </div>
 
-                    <div className="grid md:grid-cols-3 gap-8">
-                        {['Quant', 'Verbal', 'Reasoning'].map((cat) => (
+                    <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8">
+                        {['Quant', 'Verbal', 'Reasoning', 'Coding'].map((cat) => (
                             <motion.button 
                                 key={cat}
                                 whileHover={{ y: -8, scale: 1.02 }}
@@ -188,6 +188,20 @@ export default function MockTest() {
                         <Clock size={20} />
                         {formatTime(timeLeft)}
                     </div>
+                    <button
+                        onClick={() => navigate('/dashboard')}
+                        className="px-4 py-2.5 rounded-2xl bg-gray-600/20 hover:bg-gray-600/30 border border-gray-500/30 text-gray-400 hover:text-gray-300 transition-all flex items-center gap-2"
+                    >
+                        <ArrowLeft size={16} />
+                        <span className="text-xs font-black uppercase tracking-widest">Back</span>
+                    </button>
+                    <button
+                        onClick={submitTest}
+                        className="px-4 py-2.5 rounded-2xl bg-red-600/20 hover:bg-red-600/30 border border-red-500/30 text-red-400 hover:text-red-300 transition-all flex items-center gap-2"
+                    >
+                        <Square size={16} />
+                        <span className="text-xs font-black uppercase tracking-widest">End Test</span>
+                    </button>
                 </header>
 
                 <div className="flex-1 bg-white/[0.02] border border-white/5 rounded-[3rem] p-12 overflow-y-auto scrollbar-hide backdrop-blur-3xl shadow-2xl relative">

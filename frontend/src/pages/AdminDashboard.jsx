@@ -17,6 +17,21 @@ export default function AdminDashboard() {
   useEffect(() => {
     if (!adminToken) {
       navigate("/admin/login");
+    }
+  }, [adminToken, navigate]);
+
+  const handleAuthError = (error) => {
+    const status = error?.response?.status;
+    if (status === 401 || status === 403) {
+      localStorage.removeItem("admin_token");
+      navigate("/admin/login");
+      return true;
+    }
+    return false;
+  };
+
+  useEffect(() => {
+    if (!adminToken) {
       return;
     }
     const headers = { Authorization: `Bearer ${adminToken}` };
@@ -28,8 +43,14 @@ export default function AdminDashboard() {
         setStats(s.data);
         setUsers(u.data || []);
       })
+      .catch((error) => {
+        if (!handleAuthError(error)) {
+          setStats(null);
+          setUsers([]);
+        }
+      })
       .finally(() => setLoading(false));
-  }, [adminToken, navigate, page]);
+  }, [adminToken, navigate, page, pageSize]);
 
   const logout = () => {
     localStorage.removeItem("admin_token");
@@ -37,11 +58,20 @@ export default function AdminDashboard() {
   };
 
   const viewDetails = async (userId) => {
+    if (!adminToken) return;
     const headers = { Authorization: `Bearer ${adminToken}` };
-    const res = await api.get(`/api/admin/users/${userId}`, { headers });
-    setSelected(userId);
-    setDetail(res.data);
+    try {
+      const res = await api.get(`/api/admin/users/${userId}`, { headers });
+      setSelected(userId);
+      setDetail(res.data);
+    } catch (error) {
+      handleAuthError(error);
+    }
   };
+
+  if (!adminToken) {
+    return null;
+  }
 
   if (loading) {
     return <div className="min-h-screen bg-[#020617] text-white p-8">Loading admin dashboard...</div>;

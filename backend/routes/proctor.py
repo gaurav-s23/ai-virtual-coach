@@ -1,8 +1,14 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from typing import Optional
 import json, os
 from datetime import datetime
+try:
+    from .. import models
+    from ..core.security import get_current_user
+except ImportError:
+    import models  # type: ignore
+    from core.security import get_current_user  # type: ignore
 
 router = APIRouter(tags=["proctor"])
 
@@ -13,7 +19,7 @@ class ProctorEvent(BaseModel):
     metadata: Optional[dict] = None
 
 @router.post("/api/proctor/log")
-async def log_proctor_event(event: ProctorEvent):
+async def log_proctor_event(event: ProctorEvent, current_user: "models.User" = Depends(get_current_user)):
     log_dir = "backend/data/proctor_logs"
     os.makedirs(log_dir, exist_ok=True)
     path = f"{log_dir}/{event.session_id}.json"
@@ -34,7 +40,7 @@ async def log_proctor_event(event: ProctorEvent):
     return {"status": "logged", "total_events": len(logs)}
 
 @router.get("/api/proctor/report/{session_id}")
-async def get_proctor_report(session_id: str):
+async def get_proctor_report(session_id: str, current_user: "models.User" = Depends(get_current_user)):
     path = f"backend/data/proctor_logs/{session_id}.json"
     if not os.path.exists(path):
         return {"session_id": session_id, "events": [], "summary": {}}

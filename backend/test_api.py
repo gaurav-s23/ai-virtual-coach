@@ -106,22 +106,41 @@ async def test_get_dashboard_invalid_user():
 @pytest.mark.asyncio
 async def test_start_interview_returns_session_id(monkeypatch):
     # Avoid touching real Chroma / embeddings
-    monkeypatch.setattr(main_module, "upsert_resume", lambda **_kwargs: 3)
-    monkeypatch.setattr(main_module, "extract_text_from_pdf_bytes", lambda _b: "resume text")
+    monkeypatch.setattr("backend.services.rag_service.upsert_resume", lambda **_kwargs: 3)
+    monkeypatch.setattr("backend.services.rag_service.extract_resume_brief", lambda _b: "resume text")
 
     async def _fake_generate_initial_interview(_resume_text, _jd, _role):
-        return {"intro": "hi", "questions": ["q1", "q2"]}
+        return {
+            "intro": "hi",
+            "skill_questions": [f"sq{i}" for i in range(1, 6)],
+            "project_questions": [f"pq{i}" for i in range(1, 6)],
+            "followup_questions": [],
+        }
 
-    monkeypatch.setattr(main_module, "generate_initial_interview", _fake_generate_initial_interview)
+    monkeypatch.setattr("backend.services.llm_service.generate_initial_interview", _fake_generate_initial_interview)
+    monkeypatch.setattr("backend.routes.interview.generate_initial_interview", _fake_generate_initial_interview)
 
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        files = {"resume": ("resume.pdf", b"%PDF-1.4\\n" + (b"x" * 200), "application/pdf")}
-        data = {"jd": "", "role": "Software Engineer", "user_id": "1"}
-        resp = await client.post("/api/start-interview", files=files, data=data)
+    class _User:
+        id = 1
+        email = "test@example.com"
+        name = "Test"
 
-    assert resp.status_code == 201
-    payload = resp.json()
-    assert payload.get("session_id")
+    async def _override_get_current_user():
+        return _User()
+
+    app.dependency_overrides[main_module.get_current_user] = _docker compose up --build
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            files = {"resume": ("resume.pdf", b"%PDF-1.4\\n" + (b"x" * 200), "application/pdf")}
+            data = {"jd": "", "role": "Software Engineer"}
+            resp = await client.post("/api/start-interview", files=files, data=data)
+
+        assert resp.status_code == 201
+        payload = resp.json()
+        assert payload.get("session_id")
+        assert len(payload.get("skill_questions", [])) == 5
+        assert len(payload.get("project_questions", [])) == 5
+    finally:
+        app.dependency_overrides.clear()
 
 

@@ -93,6 +93,13 @@ def create_access_token(*, user_id: int, role: str = "user") -> str:
     return jwt.encode(payload, _jwt_secret(), algorithm=_jwt_algorithm())
 
 
+def decode_access_token(token: str) -> dict:
+    payload = jwt.decode(token, _jwt_secret(), algorithms=[_jwt_algorithm()])
+    if payload.get("type") != "access" or not payload.get("sub"):
+        raise JWTError("Invalid access token")
+    return payload
+
+
 def _new_refresh_token() -> str:
     return secrets.token_urlsafe(48)
 

@@ -29,13 +29,34 @@ class EmbeddingTask:
 
 
 def extract_resume_brief(file_bytes: bytes) -> str:
+    # Validate file size (max 10MB)
+    if len(file_bytes) > 10 * 1024 * 1024:
+        raise ValueError("File too large. Maximum size is 10MB.")
+    
+    # Validate file type by checking PDF header
+    if len(file_bytes) < 4 or not file_bytes.startswith(b'%PDF'):
+        raise ValueError("Invalid file format. Only PDF files are supported.")
+    
     try:
         reader = PyPDF2.PdfReader(io.BytesIO(file_bytes))
+        # Limit number of pages to prevent processing issues
+        if len(reader.pages) > 50:
+            raise ValueError("File has too many pages. Maximum is 50 pages.")
+        
         text = "\n".join([p.extract_text() or "" for p in reader.pages]).strip()
-    except Exception:
-        return ""
+    except Exception as e:
+        # Log the specific error for debugging
+        logger.error(f"PDF processing error: {str(e)}")
+        raise ValueError(f"Failed to process PDF: {str(e)}")
+    
     if not text:
-        return ""
+        raise ValueError("PDF appears to be empty or contains no extractable text.")
+    
+    # Validate extracted text length
+    if len(text) < 50:
+        raise ValueError("PDF contains too little text to be useful.")
+    
+    return text
 
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     name = lines[0][:120] if lines else "Candidate"

@@ -123,11 +123,13 @@ export default function EnglishPractice() {
         setLoading(true);
 
         try {
-            // After 5 primary questions, generate report directly
+            // After 5 primary questions, transition into deep-dive round.
             if (currentIndex === 4 && phase === 'primary') {
-                const res = await api.post('/api/english/report', { history: currentMsgBatch });
-                setReport(res.data);
-                setStep(4);
+                setPhase('deepdive');
+                setCurrentIndex(0);
+                const deepDiveIntro = "Primary round complete. Now entering deep-dive round.";
+                setMessages(prev => [...prev, { role: 'ai', text: deepDiveIntro }, { role: 'ai', text: questions[0] }]);
+                speak(`${deepDiveIntro} ${questions[0]}`, () => toggleListening(true));
             } 
             // If 5 deep-dives are done, generate report
             else if (currentIndex === 4 && phase === 'deepdive') {

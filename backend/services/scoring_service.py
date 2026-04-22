@@ -17,6 +17,13 @@ def _get_scorer():
     return _scorer
 
 
+def warmup_scorer() -> None:
+    try:
+        _get_scorer()
+    except Exception:
+        return
+
+
 def score_answer_quality(question: str, answer: str) -> float:
     if not question or not answer:
         return 0.0

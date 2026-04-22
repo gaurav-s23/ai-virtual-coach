@@ -3,9 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { 
   Mic, GraduationCap, MessageSquare, LayoutDashboard, 
-  Settings, User, Plus, Star, Zap, Lock, ArrowRight, 
-  Activity, Terminal, CheckCircle, Briefcase, Cpu, Globe,
-  Target, ShieldCheck, TrendingUp, Search, Layers, Award
+  Lock, ArrowRight, Activity, Target, ShieldCheck, TrendingUp, Search, Zap
 } from 'lucide-react';
 
 const BackgroundEffect = () => (
@@ -76,7 +74,7 @@ export default function Home() {
                 {isLoggedIn ? (
                     <div className="flex items-center gap-4">
                         <span className="text-xs font-bold text-white font-mono bg-white/10 px-4 py-2 rounded-lg border border-white/10">
-                            {user.email.split('@')[0].toUpperCase()}
+                            {user?.email?.split('@')?.[0]?.toUpperCase() ?? 'USER'}
                         </span>
                         <button onClick={() => {localStorage.clear(); window.location.reload();}} className="p-2.5 rounded-xl bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white transition-all">
                             <ArrowRight size={18} />

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Mic, Send, Loader2, Video, MicOff, MessageSquare, XCircle, Zap, Volume2, Clock } from 'lucide-react';
+import { Mic, Send, Loader2, MicOff, MessageSquare, XCircle, Zap, Volume2, Clock, ArrowLeft, Square } from 'lucide-react';
 import api from '../services/api';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -20,12 +20,10 @@ export default function LiveInterview() {
         candidate_name = "Candidate",
         interview_status = "starting",
         countdown_seconds = 8,
+        duration = "30 mins",
     } = location.state || {};
 
-    if (!session_id || !skill_questions?.length) {
-        navigate('/setup-interview', { replace: true });
-        return null;
-    }
+    const hasValidSession = !!session_id && !!skill_questions?.length;
 
     const [questions, setQuestions] = useState([]);
     const [skillQuestions, setSkillQuestions] = useState([]);
@@ -37,18 +35,34 @@ export default function LiveInterview() {
     const [isListening, setIsListening] = useState(false);
     const [isAiSpeaking, setIsAiSpeaking] = useState(false); 
     const [phase, setPhase] = useState('skills');
-    const [timeLeft, setTimeLeft] = useState(1800); 
+    const [timeLeft, setTimeLeft] = useState(initialTimeLeft); 
     const [startCountdown, setStartCountdown] = useState(countdown_seconds);
     const [statusText, setStatusText] = useState("Preparing interview...");
     const [performanceLog, setPerformanceLog] = useState([]);
+    const [confidenceScore, setConfidenceScore] = useState(75);
+    const [visionData, setVisionData] = useState({
+        is_looking_at_camera: true,
+        confidence_score: 75,
+        face_detected: true,
+        engagement_level: "high"
+    });
 
     const videoRef = useRef(null);
     const chatEndRef = useRef(null);
     const recognitionRef = useRef(null);
     const wsRef = useRef(null);
     const questionStartTime = useRef(Date.now());
+    const visionIntervalRef = useRef(null);
 
     const activeQuestion = questions[currentIndex] || "Preparing your first question...";
+
+    // Convert duration string to seconds
+    const getDurationInSeconds = (durationStr) => {
+        const match = durationStr.match(/(\d+)\s*mins?/);
+        return match ? parseInt(match[1]) * 60 : 1800; // Default to 30 mins
+    };
+
+    const initialTimeLeft = getDurationInSeconds(duration);
 
     const logProctorEvent = async (event_type) => {
         try { await api.post('/api/proctor/log', { session_id, event_type, timestamp: new Date().toISOString() }); }
@@ -74,7 +88,9 @@ export default function LiveInterview() {
     useEffect(() => {
         if (!session_id) return;
         const wsBase = (import.meta?.env?.VITE_API_URL || 'http://localhost:8000').replace('http', 'ws');
-        wsRef.current = new WebSocket(`${wsBase}/ws/interview/${session_id}`);
+        const token = localStorage.getItem('token');
+        const wsUrl = `${wsBase}/ws/interview/${session_id}?token=${encodeURIComponent(token || '')}`;
+        wsRef.current = new WebSocket(wsUrl);
         wsRef.current.onmessage = (evt) => {
             try {
                 const fb = JSON.parse(evt.data);
@@ -173,6 +189,61 @@ export default function LiveInterview() {
         return () => clearInterval(timer);
     }, [timeLeft]);
 
+    // Vision and Confidence Monitoring
+    useEffect(() => {
+        if (!hasValidSession) return;
+
+        // Real camera capture and vision analysis
+        visionIntervalRef.current = setInterval(async () => {
+            try {
+                if (videoRef.current && videoRef.current.readyState === 4) {
+                    // Create canvas to capture frame
+                    const canvas = document.createElement('canvas');
+                    canvas.width = videoRef.current.videoWidth;
+                    canvas.height = videoRef.current.videoHeight;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+                    
+                    // Convert to base64
+                    const frameData = canvas.toDataURL('image/jpeg', 0.8);
+                    
+                    // Send to vision analysis API
+                    const token = localStorage.getItem('token');
+                    const response = await fetch('/api/vision/analyze', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${token}`
+                        },
+                        body: JSON.stringify({
+                            frame_data: frameData,
+                            session_id: session_id
+                        })
+                    });
+                    
+                    if (response.ok) {
+                        const visionData = await response.json();
+                        setVisionData({
+                            is_looking_at_camera: visionData.is_looking_at_camera,
+                            confidence_score: visionData.confidence_score,
+                            face_detected: visionData.face_detected,
+                            engagement_level: visionData.engagement_level
+                        });
+                    }
+                }
+            } catch (error) {
+                console.warn('Vision analysis failed:', error);
+                // Vision analysis unavailable - will retry on next interval
+            }
+        }, 4000); // Update every 4 seconds
+
+        return () => {
+            if (visionIntervalRef.current) {
+                clearInterval(visionIntervalRef.current);
+            }
+        };
+    }, [hasValidSession, session_id]);
+
     const toggleListening = (force = null) => {
         if (isAiSpeaking && force !== false) return; 
         const start = force !== null ? force : !isListening;
@@ -219,8 +290,12 @@ export default function LiveInterview() {
             });
 
             const feedback = res.data.reply;
+            // Update confidence score from backend analysis
+            if (res.data.confidence_score) {
+                setConfidenceScore(res.data.confidence_score);
+            }
             // Capture updated log in local variable for immediate use in Pivot logic
-            const updatedLog = [...performanceLog, { question: currentQ, answer, feedback }];
+            const updatedLog = [...performanceLog, { question: currentQ, answer, feedback, confidence_score: res.data.confidence_score }];
             setPerformanceLog(updatedLog);
             setMessages(prev => [...prev, { role: 'ai', text: feedback, type: 'feedback' }]);
             
@@ -294,6 +369,23 @@ export default function LiveInterview() {
 
     const formatTime = (s) => `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`;
 
+    if (!hasValidSession) {
+        return (
+            <div className="h-screen bg-[#030303] text-slate-200 flex items-center justify-center font-sans p-6">
+                <div className="w-full max-w-xl p-10 rounded-3xl border border-white/10 bg-white/[0.03] text-center space-y-6">
+                    <h2 className="text-3xl font-black text-white">Session not found</h2>
+                    <p className="text-slate-400">Session not found. Please start a new interview.</p>
+                    <button
+                        onClick={() => navigate('/setup-interview')}
+                        className="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold"
+                    >
+                        Start New Interview
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
     if (questions.length === 0) {
         return (
             <div className="h-screen bg-[#030303] text-slate-200 flex items-center justify-center font-sans">
@@ -338,6 +430,20 @@ export default function LiveInterview() {
                                     ? `PROJECT ${currentIndex + 1} / ${projectQuestions.length || 5}`
                                     : `FOLLOWUP ${currentIndex + 1} / ${questions.length || 5}`}
                         </div>
+                        <button
+                            onClick={() => navigate('/dashboard')}
+                            className="px-4 py-2.5 rounded-2xl bg-gray-600/20 hover:bg-gray-600/30 border border-gray-500/30 text-gray-400 hover:text-gray-300 transition-all flex items-center gap-2"
+                        >
+                            <ArrowLeft size={16} />
+                            <span className="text-xs font-black uppercase tracking-widest">Back</span>
+                        </button>
+                        <button
+                            onClick={() => finishInterview("Interview ended by user")}
+                            className="px-4 py-2.5 rounded-2xl bg-red-600/20 hover:bg-red-600/30 border border-red-500/30 text-red-400 hover:text-red-300 transition-all flex items-center gap-2"
+                        >
+                            <Square size={16} />
+                            <span className="text-xs font-black uppercase tracking-widest">End Interview</span>
+                        </button>
                     </div>
                 </div>
 
@@ -349,6 +455,34 @@ export default function LiveInterview() {
                     <div className="absolute top-8 left-8 flex items-center gap-2 bg-black/40 px-4 py-2 rounded-full border border-white/10 backdrop-blur-md">
                         <div className="w-2.5 h-2.5 bg-red-600 rounded-full animate-ping" />
                         <span className="text-[10px] font-black uppercase tracking-widest">Live Bio-Feed</span>
+                    </div>
+
+                    {/* Vision Overlay */}
+                    <div className="absolute top-8 right-8 flex flex-col gap-3">
+                        {/* Eye Contact Indicator */}
+                        <div className={`flex items-center gap-2 px-3 py-2 rounded-full backdrop-blur-md border transition-all ${
+                            visionData.is_looking_at_camera 
+                                ? 'bg-emerald-500/20 border-emerald-500/40' 
+                                : 'bg-orange-500/20 border-orange-500/40'
+                        }`}>
+                            <div className={`w-2 h-2 rounded-full ${
+                                visionData.is_looking_at_camera ? 'bg-emerald-500' : 'bg-orange-500'
+                            } ${visionData.is_looking_at_camera ? 'animate-pulse' : ''}`} />
+                            <span className="text-[10px] font-black uppercase tracking-widest">
+                                {visionData.is_looking_at_camera ? 'Eye Contact' : 'Look at Camera'}
+                            </span>
+                        </div>
+
+                        {/* Engagement Level */}
+                        <div className={`px-3 py-2 rounded-full backdrop-blur-md border text-[10px] font-black uppercase tracking-widest ${
+                            visionData.engagement_level === 'high' 
+                                ? 'bg-blue-500/20 border-blue-500/40 text-blue-400'
+                                : visionData.engagement_level === 'medium'
+                                    ? 'bg-yellow-500/20 border-yellow-500/40 text-yellow-400'
+                                    : 'bg-red-500/20 border-red-500/40 text-red-400'
+                        }`}>
+                            {visionData.engagement_level.toUpperCase()} ENGAGEMENT
+                        </div>
                     </div>
 
                     {/* Waveform visualizer */}

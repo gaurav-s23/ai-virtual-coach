@@ -12,7 +12,7 @@ export default function Auth() {
     const handleSubmit = async (e) => {
         e.preventDefault();
         try {
-            const endpoint = isLogin ? "/api/login" : "/api/auth/signup";
+            const endpoint = isLogin ? "/api/auth/login" : "/api/auth/signup";
             const response = await api.post(endpoint, {
                 email: email,
                 password: password,
@@ -27,13 +27,19 @@ export default function Auth() {
 
             if (response.data) {
                 console.log("Success:", response.data);
-                localStorage.setItem("user", JSON.stringify(response.data.user));
-                localStorage.setItem("token", response.data.access_token || response.data.token);
-                alert("Login Successful!");
-                navigate("/dashboard");
+                // Ensure localStorage operations complete before navigation
+                try {
+                    localStorage.setItem("user", JSON.stringify(response.data.user));
+                    localStorage.setItem("token", response.data.access_token || response.data.token);
+                    alert("Login Successful!");
+                    navigate("/dashboard");
+                } catch (storageError) {
+                    console.error("Storage Error:", storageError);
+                    alert("Login succeeded but failed to store session. Please try again.");
+                }
             }
         } catch (error) {
-            // 👈 3. Bullet-proof error handling
+            // 3. Bullet-proof error handling
             console.error("Auth Error:", error);
             if (error.response) {
                 // Backend ne response bheja (e.g. 400 or 422 error)

@@ -45,14 +45,23 @@ export default function Dashboard() {
     const getUserId = () => {
         try {
             const user = JSON.parse(localStorage.getItem('user'));
-            return user?.id ?? 1;
-        } catch {
-            return 1;
+            if (!user || !user.id) {
+                setError('User session not found. Please log in again.');
+                navigate('/auth');
+                return null;
+            }
+            return user.id;
+        } catch (error) {
+            console.error('Failed to get user ID:', error);
+            setError('Session corrupted. Please log in again.');
+            navigate('/auth');
+            return null;
         }
     };
 
     const fetchDashboard = async () => {
         const userId = getUserId();
+        if (userId === null) return;
         setLoading(true);
         setError(null);
         try {
@@ -237,11 +246,18 @@ const NavItem = ({ icon, label, active = false }) => (
     </div>
 );
 
+const colorMap = {
+    cyan: { bg: 'bg-cyan-500/10', border: 'border-cyan-500/20', text: 'text-cyan-500', textMuted: 'text-cyan-500/60' },
+    orange: { bg: 'bg-orange-500/10', border: 'border-orange-500/20', text: 'text-orange-500', textMuted: 'text-orange-500/60' },
+    blue: { bg: 'bg-blue-500/10', border: 'border-blue-500/20', text: 'text-blue-500', textMuted: 'text-blue-500/60' },
+    violet: { bg: 'bg-violet-500/10', border: 'border-violet-500/20', text: 'text-violet-500', textMuted: 'text-violet-500/60' },
+};
+
 const StatPill = ({ icon, label, value, color }) => (
-    <div className={`bg-${color}-500/10 border border-${color}-500/20 px-6 py-4 rounded-[2rem] flex items-center gap-4`}>
-        <div className={`text-${color}-500`}>{icon}</div>
+    <div className={`${(colorMap[color] || colorMap.cyan).bg} ${(colorMap[color] || colorMap.cyan).border} px-6 py-4 rounded-[2rem] flex items-center gap-4`}>
+        <div className={(colorMap[color] || colorMap.cyan).text}>{icon}</div>
         <div>
-            <p className={`text-[9px] font-black text-${color}-500/60 uppercase tracking-widest leading-none`}>{label}</p>
+            <p className={`text-[9px] font-black ${(colorMap[color] || colorMap.cyan).textMuted} uppercase tracking-widest leading-none`}>{label}</p>
             <p className="text-xl font-black font-mono leading-none mt-1.5 text-white">{value}</p>
         </div>
     </div>
@@ -250,7 +266,7 @@ const StatPill = ({ icon, label, value, color }) => (
 const AttemptCard = ({ icon, label, count, color }) => (
     <div className="bg-white/[0.02] border border-white/5 p-8 rounded-[2.5rem] flex items-center justify-between group hover:border-cyan-500/30 transition-all">
         <div className="flex items-center gap-5">
-            <div className={`p-4 rounded-2xl bg-${color}-500/10 text-${color}-400 group-hover:scale-110 transition-transform`}>{icon}</div>
+            <div className={`p-4 rounded-2xl ${(colorMap[color] || colorMap.cyan).bg} ${(colorMap[color] || colorMap.cyan).text} group-hover:scale-110 transition-transform`}>{icon}</div>
             <p className="text-xs font-black text-slate-400 uppercase tracking-widest">{label}</p>
         </div>
         <span className="text-3xl font-black text-white italic">{count}</span>

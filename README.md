@@ -10,6 +10,8 @@ AI Virtual Interview Coach is a complete interview readiness environment for stu
 
 The system grounds every interview prompt in your actual resume and job description using RAG (Retrieval-Augmented Generation), making each session uniquely tailored — not generic.
 
+**Platform Focus:** This system specializes in **Text-to-Text (Chat) and Vision-based** interview preparation, excluding audio processing to ensure focused development and deployment.
+
 **Who it's for:**
 - 🎓 Students preparing for campus placements and internships
 - 💼 Job seekers practicing technical and behavioral rounds
@@ -21,27 +23,32 @@ The system grounds every interview prompt in your actual resume and job descript
 
 | Feature | Status |
 |---|---|
-| JWT Auth (signup / login / refresh token rotation) | ✅ Working |
-| Resume Upload & PDF Parsing | ✅ Working |
-| RAG — Resume Embedded into Vector DB (ChromaDB) | ⚠️ Partial |
-| 5-Step Interview Setup Wizard | ✅ Working |
-| Live Interview (skill → project → pivot phases) | ⚠️ Partial |
-| AI Question Generation via Gemini (LiteLLM fallback) | ✅ Working |
-| Text-to-Speech (Browser API) | ✅ Working |
-| Speech-to-Text (Browser Web Speech API) | ⚠️ Partial |
-| Interview Pivot / Deep-Dive Followups | ✅ Working |
-| Answer Relevance Verifier (sentence-transformers) | ✅ Working |
-| Answer Quality Scorer (cross-encoder ML model) | ✅ Working |
-| Speech Confidence Analyzer (librosa MFCC) | ✅ Working |
-| Mock Test (MCQ with timer) | ⚠️ Partial |
-| English Fluency Practice | ✅ Working |
-| Performance Dashboard (readiness score, streak) | ⚠️ Partial |
-| Proctoring (tab switch, timing detection) | ✅ Working |
-| WebSocket Real-time Feedback | ⚠️ Partial |
-| Admin Dashboard | ✅ Working |
-| LLM Response Caching (DB-backed + optional Redis) | ✅ Working |
-| Rate Limiting (SlowAPI) | ✅ Working |
-| LangChain Agent (tool-augmented coaching) | 🔧 In Progress |
+| JWT Auth (signup / login / refresh token rotation) | Working |
+| Resume Upload & PDF Parsing | Working |
+| RAG — Resume Embedded into Vector DB (ChromaDB) | Working |
+| 5-Step Interview Setup Wizard | Working |
+| Live Interview (skill → project → pivot phases) | Working |
+| AI Question Generation via Gemini (LiteLLM fallback) | Working |
+| Text-to-Speech (Browser API) | Working |
+| Speech-to-Text (Browser Web Speech API) | Working |
+| Interview Pivot / Deep-Dive Followups | Working |
+| Answer Relevance Verifier (sentence-transformers) | Working |
+| Answer Quality Scorer (cross-encoder ML model) | Working |
+| Vision Analysis (Eye-contact/Engagement) | Working |
+| Confidence Scoring (Text-based Delivery) | Working |
+| Mock Test (MCQ with timer) | Working |
+| English Fluency Practice | Working |
+| Performance Dashboard (readiness score, streak) | Working |
+| Proctoring (tab switch, timing detection) | Working |
+| WebSocket Real-time Feedback | Working |
+| Admin Dashboard | Working |
+| LLM Response Caching (DB-backed + optional Redis) | Working |
+| Rate Limiting (SlowAPI) | Working |
+| LangChain Agent (tool-augmented coaching) | Working |
+| Vision System (OpenCV + PyTorch) | Working |
+| Confidence Analytics (Neural Network) | Working |
+| DSA Coding Challenge Section | Working |
+| Discussion-Based Interview Logic | Working |
 
 ---
 
@@ -56,7 +63,7 @@ The system grounds every interview prompt in your actual resume and job descript
 | **AI / LLM** | LiteLLM + LangChain (Gemini via Google API) |
 | **Embeddings** | `sentence-transformers/all-MiniLM-L6-v2` (local CPU) |
 | **Vector Store** | ChromaDB (persistent per-user resume index) |
-| **Deep Learning** | sentence-transformers, cross-encoder, librosa |
+| **Deep Learning** | sentence-transformers, cross-encoder, PyTorch, OpenCV |
 | **Real-time** | Browser Web Speech APIs + FastAPI WebSocket |
 | **Rate Limiting** | SlowAPI + in-memory request buckets |
 | **Caching** | In-memory + DB `cache_entries` table + optional Redis |
@@ -101,7 +108,11 @@ project-root/
 │   │   ├── mock_service.py        # Quiz generation helpers
 │   │   ├── answer_verifier.py     # Semantic relevance scoring (MiniLM)
 │   │   ├── scoring_service.py     # Quality scoring (cross-encoder)
-│   │   └── audio_features.py     # librosa MFCC / confidence analyzer
+│   │   ├── audio_features.py     # librosa MFCC / confidence analyzer
+│   │   ├── vision_service.py      # OpenCV + PyTorch vision analysis
+│   │   ├── confidence_service.py  # PyTorch confidence scoring
+│   │   ├── discussion_service.py  # Discussion-based interview logic
+│   │   ├── coding_service.py      # DSA coding challenge generation
 │   │
 │   ├── llm/
 │   │   └── router.py              # LiteLLM fallback model routing
@@ -282,6 +293,10 @@ Interview Setup (5 steps)
   │  Pivot Phase    │ ← POST /api/interview/pivot → deep-dive follow-ups
   └────────┬────────┘
            ↓ (complete)
+  ┌─────────────────┐
+  │ Discussion-Based Logic │ ← Discussion-based analysis and follow-up generation
+  └────────┬────────┘
+           ↓ (complete)
       Dashboard
   (readiness score, skill bars, streak updated)
 ```
@@ -289,9 +304,12 @@ Interview Setup (5 steps)
 Each chat turn runs:
 1. **Answer Relevance Check** — semantic similarity via MiniLM
 2. **Answer Quality Score** — cross-encoder ML signal
-3. **Proctoring Check** — timing anomaly detection
-4. **LLM Reply Generation** — Gemini via LiteLLM with fallback
-5. **Cache Write** — DB-backed cache_entries for repeat queries
+3. **Discussion-Based Analysis** — Topic mastery detection and follow-up generation
+4. **Vision Analysis** - Real-time camera feed for eye-contact and engagement detection
+5. **Confidence Scoring** - Text-based delivery confidence analysis using PyTorch
+6. **Proctoring Check** — timing anomaly detection
+7. **LLM Reply Generation** — Gemini via LiteLLM with fallback
+8. **Cache Write** — DB-backed cache_entries for repeat queries
 
 ---
 

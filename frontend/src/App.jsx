@@ -11,7 +11,36 @@ import AdminDashboard from './pages/AdminDashboard';
 
 const ProtectedRoute = ({ children }) => {
     const token = localStorage.getItem('token');
-    return token ? children : <Navigate to="/auth" />;
+    
+    if (!token) {
+        return <Navigate to="/auth" />;
+    }
+    
+    // Basic JWT token validation (check if token is properly formatted)
+    try {
+        const parts = token.split('.');
+        if (parts.length !== 3) {
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            return <Navigate to="/auth" />;
+        }
+        
+        // Check if token is expired (basic check)
+        const payload = JSON.parse(atob(parts[1]));
+        const currentTime = Date.now() / 1000;
+        if (payload.exp && payload.exp < currentTime) {
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            return <Navigate to="/auth" />;
+        }
+        
+        return children;
+    } catch (error) {
+        console.error('Token validation failed:', error);
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        return <Navigate to="/auth" />;
+    }
 };
 
 function App() {

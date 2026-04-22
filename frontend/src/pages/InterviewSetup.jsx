@@ -72,7 +72,8 @@ export default function InterviewSetup() {
         state: { 
             ...res.data, 
             role: data.role, 
-            context: data.jd 
+            context: data.jd,
+            duration: data.duration 
         } 
       });
     } catch (err) {

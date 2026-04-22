@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import time
@@ -66,6 +67,15 @@ class FinalReport(BaseModel):
 class ChatFeedback(BaseModel):
     reply: str
     readiness_score: int = Field(ge=0, le=100)
+
+
+def _hash(value: str) -> str:
+    return hashlib.sha256((value or "").encode("utf-8")).hexdigest()[:32]
+
+def _cache_key_with_user(prefix: str, user_id: int, *values: str) -> str:
+    """Generate cache key that includes user context to prevent cross-user collisions"""
+    key_parts = [prefix, str(user_id)] + [v or "" for v in values]
+    return ":".join(key_parts)
 
 
 def _cache_get(key: str) -> Any | None:
@@ -215,7 +225,7 @@ async def generate_initial_interview(resume_text: str, jd_text: str, role: str) 
         followup_questions=[],
     )
     result = await _llm_json_call(
-        cache_key=f"interview:{role}:{(resume_text or '')[:120]}:{(jd_text or '')[:120]}",
+        cache_key=f"interview:{_hash(role)}:{_hash(resume_text)}:{_hash(jd_text)}",
         prompt=prompt,
         schema=InterviewPlan,
         fallback=fallback,
@@ -241,7 +251,7 @@ async def generate_pivot_deepdives(history: list, role: str, context: str) -> di
         ],
     )
     result = await _llm_json_call(
-        cache_key=f"pivot:{role}:{json.dumps(history)[:120]}",
+        cache_key=f"pivot:{_hash(role)}:{_hash(json.dumps(history))}:{_hash(context)}",
         prompt=prompt,
         schema=PivotPlan,
         fallback=fallback,
@@ -292,13 +302,34 @@ async def generate_quiz(pdf_text: str, category: str) -> list[dict]:
 
 
 async def generate_english_questions(topic: str) -> list[str]:
-    prompt = f'Topic: {topic[:200]}\nOutput schema: ["question1","question2","question3","question4","question5"]'
+    # Natural conversational prompt for "Baat-chit" style English practice
+    prompt = f'''
+    Topic: {topic[:200]}
+    
+    Generate 5 natural, conversational questions for English speaking practice. 
+    These should feel like a friendly chat, not a formal interview.
+    Make them open-ended and encouraging.
+    
+    Style: Natural conversation ("Baat-chit" style)
+    Tone: Friendly, encouraging, conversational
+    Avoid: Formal, academic, or overly complex questions
+    
+    Output schema: ["question1","question2","question3","question4","question5"]
+    
+    Examples of good style:
+    - "So, what are your thoughts on..."
+    - "Tell me about a time when..."
+    - "How do you feel about..."
+    - "What's your take on..."
+    - "I'd love to hear your perspective on..."
+    '''
+    
     fallback = [
-        f"What is your perspective on {topic}?",
-        "What are the key opportunities and risks?",
-        "How does this affect society in the long term?",
-        "What real example supports your argument?",
-        "What should leaders do next?",
+        f"So, what are your thoughts on {topic}? I'd love to hear your perspective.",
+        "That's interesting! Can you share a personal experience related to this?",
+        "How do you feel this impacts our daily lives? Tell me more.",
+        "What's something people often misunderstand about this topic?",
+        "If you could give one piece of advice on this, what would it be?",
     ]
     cached = _cache_get(f"english_questions:{topic.lower()[:80]}")
     if cached is not None:
@@ -340,7 +371,7 @@ async def generate_final_report(history: list) -> dict:
         ready_for_senior_role=False,
     )
     result = await _llm_json_call(
-        cache_key=f"final_report:{json.dumps(history)[:120]}",
+        cache_key=f"final_report:{_hash(json.dumps(history))}",
         prompt=prompt,
         schema=FinalReport,
         fallback=fallback,
@@ -349,15 +380,31 @@ async def generate_final_report(history: list) -> dict:
 
 
 async def generate_chat_feedback(question: str, answer: str, context: str) -> tuple[str, int]:
-    prompt = (
-        f"Question: {question}\n"
-        f"Answer: {answer}\n"
-        f"Context: {context[:400]}\n"
-        'Output schema: {"reply":"2-4 lines feedback","readiness_score":0-100}'
-    )
-    fallback = ChatFeedback(reply="Good attempt. Add more detail and structure.", readiness_score=55)
+    # Natural conversational feedback for English practice
+    prompt = f'''
+    Question: {question}
+    Answer: {answer}
+    Context: {context[:400]}
+    
+    Generate friendly, encouraging feedback for English speaking practice.
+    This should feel like a supportive conversation partner, not a strict evaluator.
+    
+    Style: Natural, encouraging, conversational ("Baat-chit" style)
+    Tone: Supportive, friendly, helpful
+    Focus: Encouragement and gentle suggestions
+    
+    Output schema: {{"reply":"2-4 friendly, encouraging lines","readiness_score":0-100}}
+    
+    Examples of good feedback style:
+    - "That's a great point! I really like how you..."
+    - "Nice! You could also try adding..."
+    - "Wonderful! Your pronunciation is clear, and..."
+    - "Good job! To make it even better, maybe..."
+    '''
+    
+    fallback = ChatFeedback(reply="That's a great start! I can see you're thinking about this carefully. Keep up the good work!", readiness_score=65)
     result = await _llm_json_call(
-        cache_key=f"chat:{question[:80]}:{answer[:80]}",
+        cache_key=f"chat:{_hash(question)}:{_hash(answer)}:{_hash(context)}",
         prompt=prompt,
         schema=ChatFeedback,
         fallback=fallback,

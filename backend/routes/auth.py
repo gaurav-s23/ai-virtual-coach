@@ -36,6 +36,7 @@ router = APIRouter(prefix="/api", tags=["Auth"])
 @router.post("/login", response_model=LoginLegacyResponse)
 async def login(data: LoginRequest, db: Session = Depends(get_db)):
     email = (data.email or "").strip().lower()
+    validate_password_length(data.password)
     user = db.query(models.User).filter(models.User.email == email).first()
     if not user or not verify_password(data.password, user.password):
         raise HTTPException(status_code=400, detail="Invalid input")
@@ -74,7 +75,7 @@ async def auth_signup(data: SignupRequest, db: Session = Depends(get_db)):
     return {"id": user.id, "email": user.email, "name": user.name}
 
 
-@router.post("/auth/login", response_model=TokenResponse)
+@router.post("/auth/login", response_model=LoginLegacyResponse)
 async def auth_login(data: LoginRequest, db: Session = Depends(get_db)):
     email = (data.email or "").strip().lower()
     validate_password_length(data.password)
@@ -82,7 +83,14 @@ async def auth_login(data: LoginRequest, db: Session = Depends(get_db)):
     if not user or not verify_password(data.password, user.password):
         raise HTTPException(status_code=400, detail="Invalid input")
     tokens = issue_token_pair(db=db, user=user)
-    return tokens.__dict__
+    return {
+        "user": {"id": user.id, "email": user.email, "name": user.name},
+        "token": tokens.access_token,
+        "access_token": tokens.access_token,
+        "refresh_token": tokens.refresh_token,
+        "token_type": tokens.token_type,
+        "expires_in": tokens.expires_in,
+    }
 
 
 @router.post("/auth/refresh", response_model=TokenResponse)
