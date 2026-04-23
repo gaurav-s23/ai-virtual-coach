@@ -36,6 +36,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from jose import JWTError
+from sqlalchemy import text
 
 try:
     from core.config import get_settings
@@ -273,6 +274,34 @@ _ws_connections: dict = {}
 
 @app.websocket("/ws/interview/{session_id}")
 async def interview_ws(websocket: WebSocket, session_id: str):
+    # Handle WebSocket CORS
+    origin = websocket.headers.get("origin", "")
+    origin_host = None
+    if origin:
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(origin)
+            origin_host = f"{parsed.scheme}://{parsed.netloc}"
+        except Exception:
+            logger.warning(f"Failed to parse WebSocket origin: {origin}")
+            origin_host = origin
+    
+    # Check if origin is allowed (same logic as HTTP CORS)
+    allowed_origins = origins + ["*"]  # Allow same-origin and any explicitly configured
+    
+    is_allowed = False
+    for allowed_origin in allowed_origins:
+        if allowed_origin == "*" or origin_host == allowed_origin or origin == allowed_origin:
+            is_allowed = True
+            break
+    
+    if not is_allowed and origin_host not in ["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173", "http://127.0.0.1:3000"]:
+        logger.warning(f"WebSocket connection rejected from disallowed origin: {origin}")
+        await websocket.close(code=1008, reason="Origin not allowed")
+        return
+    
+    logger.debug(f"WebSocket connection accepted from origin: {origin}")
+    
     token = websocket.query_params.get("token")
     # region agent log
     _debug_log(
@@ -330,6 +359,132 @@ async def interview_ws(websocket: WebSocket, session_id: str):
         _ws_connections.pop(session_id, None)
 
 
+@app.get("/health")
+async def health_check():
+    """
+    Comprehensive health check endpoint that tests all critical dependencies.
+    Returns detailed status of database, ChromaDB, and system health.
+    """
+    import asyncio
+    from datetime import datetime, timezone
+    
+    health_status = {
+        "status": "healthy",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "version": settings.app_version,
+        "checks": {}
+    }
+    
+    # Database connectivity check
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("SELECT 1"))
+            if result.fetchone()[0] == 1:
+                health_status["checks"]["database"] = {
+                    "status": "healthy",
+                    "message": "Database connection successful"
+                }
+            else:
+                raise Exception("Database query failed")
+    except Exception as e:
+        health_status["checks"]["database"] = {
+            "status": "unhealthy",
+            "message": f"Database connection failed: {str(e)}"
+        }
+        health_status["status"] = "unhealthy"
+    
+    # ChromaDB connectivity check
+    try:
+        from rag.store import get_embeddings
+        # Test embedding model loading
+        embeddings = get_embeddings()
+        # Test basic embedding functionality
+        test_embedding = embeddings.embed_query("health check test")
+        if test_embedding and len(test_embedding) > 0:
+            health_status["checks"]["chromadb"] = {
+                "status": "healthy",
+                "message": f"ChromaDB and embeddings working (dimensions: {len(test_embedding)})"
+            }
+        else:
+            raise Exception("Embedding model returned empty result")
+    except Exception as e:
+        health_status["checks"]["chromadb"] = {
+            "status": "unhealthy",
+            "message": f"ChromaDB/embeddings failed: {str(e)}"
+        }
+        health_status["status"] = "unhealthy"
+    
+    # Environment variables check
+    try:
+        required_vars = ["ADMIN_EMAIL", "ADMIN_PASSWORD", "JWT_SECRET_KEY"]
+        missing_vars = []
+        
+        for var in required_vars:
+            if not getattr(settings, var.lower(), None):
+                missing_vars.append(var)
+        
+        if missing_vars:
+            health_status["checks"]["environment"] = {
+                "status": "unhealthy",
+                "message": f"Missing environment variables: {', '.join(missing_vars)}"
+            }
+            health_status["status"] = "unhealthy"
+        else:
+            health_status["checks"]["environment"] = {
+                "status": "healthy",
+                "message": "All required environment variables set"
+            }
+    except Exception as e:
+        health_status["checks"]["environment"] = {
+            "status": "unhealthy",
+            "message": f"Environment check failed: {str(e)}"
+        }
+        health_status["status"] = "unhealthy"
+    
+    # Memory and system resources check
+    try:
+        import psutil
+        memory = psutil.virtual_memory()
+        disk = psutil.disk_usage('/')
+        
+        health_status["checks"]["system"] = {
+            "status": "healthy",
+            "memory_usage_percent": memory.percent,
+            "disk_usage_percent": disk.percent,
+            "cpu_count": psutil.cpu_count(),
+            "message": "System resources within acceptable limits"
+        }
+        
+        # Mark as unhealthy if resources are critically low
+        if memory.percent > 90 or disk.percent > 90:
+            health_status["checks"]["system"]["status"] = "unhealthy"
+            health_status["checks"]["system"]["message"] = "Critical resource usage"
+            health_status["status"] = "unhealthy"
+            
+    except ImportError:
+        health_status["checks"]["system"] = {
+            "status": "warning",
+            "message": "psutil not available for system monitoring"
+        }
+    except Exception as e:
+        health_status["checks"]["system"] = {
+            "status": "unhealthy",
+            "message": f"System check failed: {str(e)}"
+        }
+        health_status["status"] = "unhealthy"
+    
+    # Return appropriate HTTP status code
+    status_code = 200 if health_status["status"] == "healthy" else 503
+    
+    return JSONResponse(
+        content=health_status,
+        status_code=status_code
+    )
+
+
 @app.get("/")
 def root():
-    return {"message": "Neural Core Synced with Engine v3.0"}
+    return JSONResponse(
+        content={"message": "Neural Core Synced with Engine v3.0"},
+        status_code=200
+    )

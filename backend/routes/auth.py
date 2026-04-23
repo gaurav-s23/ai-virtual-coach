@@ -119,3 +119,51 @@ async def auth_refresh(data: RefreshRequest, db: Session = Depends(get_db)):
 @router.get("/auth/me", response_model=MeResponse)
 async def auth_me(current_user: "models.User" = Depends(get_current_user)):
     return {"id": current_user.id, "email": current_user.email, "name": current_user.name}
+
+
+@router.post("/auth/verify-token")
+async def verify_token(
+    token: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Server-side token verification endpoint for enhanced security.
+    Validates JWT token and returns user info if valid.
+    """
+    try:
+        from jose import JWTError, jwt
+        from auth.security import _jwt_secret
+        
+        # Decode and validate the token
+        payload = jwt.decode(token, _jwt_secret(), algorithms=["HS256"])
+        
+        # Extract user ID from token
+        user_id = payload.get("sub")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token: missing user ID")
+        
+        # Check if user exists in database
+        user = db.query(User).filter(User.id == int(user_id)).first()
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid token: user not found")
+        
+        # Return user info if token is valid
+        return {
+            "valid": True,
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "name": user.name
+            },
+            "expires_at": payload.get("exp")
+        }
+        
+    except JWTError as e:
+        logger.warning(f"Token verification failed: {str(e)}")
+        raise HTTPException(status_code=401, detail="Invalid token: malformed or expired")
+    except ValueError as e:
+        logger.warning(f"Token validation error: {str(e)}")
+        raise HTTPException(status_code=401, detail="Invalid token: format error")
+    except Exception as e:
+        logger.error(f"Unexpected error during token verification: {str(e)}")
+        raise HTTPException(status_code=500, detail="Token verification failed")

@@ -50,6 +50,8 @@ async def start_interview(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    # Rate limiting for interview creation (resource-intensive)
+    enforce_rate_limit(key=f"start_interview:{current_user.id}", max_requests=3, window_seconds=300)  # 3 interviews per 5 minutes
     content = await resume.read()
     if not content or len(content) < 50:
         raise HTTPException(status_code=400, detail="Invalid input")
@@ -380,3 +382,52 @@ async def get_interview_stats(
     except Exception as e:
         logger.error("interview_stats_error user_id=%s error=%s", user_id, str(e))
         raise HTTPException(status_code=500, detail="Failed to get interview stats")
+
+
+@router.post("/interview/abandon-session")
+async def abandon_session(
+    session_id: str,
+    abandoned_at: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Mark an interview session as abandoned."""
+    # Rate limiting for session abandonment
+    enforce_rate_limit(key=f"abandon_session:{current_user.id}", max_requests=10, window_seconds=60)  # 10 abandons per minute
+    try:
+        # Parse the abandoned_at timestamp
+        from datetime import datetime
+        abandoned_timestamp = datetime.fromisoformat(abandoned_at.replace('Z', '+00:00'))
+        
+        # Find the interview session
+        interview = (
+            db.query(Interview)
+            .filter(Interview.session_id == session_id)
+            .filter(Interview.user_id == current_user.id)
+            .first()
+        )
+        
+        if not interview:
+            logger.warning("interview_abandon_not_found user_id=%s session_id=%s", current_user.id, session_id)
+            raise HTTPException(status_code=404, detail="Interview session not found")
+        
+        # Update the interview status to abandoned
+        interview.status = "abandoned"
+        # Note: We don't have abandoned_at field in Interview model, but we could add it in the future
+        # For now, we'll update the status and log the abandonment
+        
+        db.commit()
+        
+        logger.info("interview_abandoned user_id=%s session_id=%s abandoned_at=%s", 
+                   current_user.id, session_id, abandoned_timestamp)
+        
+        return {"message": "Session marked as abandoned", "session_id": session_id}
+        
+    except ValueError as e:
+        logger.error("interview_abandon_invalid_timestamp user_id=%s session_id=%s error=%s", 
+                    current_user.id, session_id, str(e))
+        raise HTTPException(status_code=400, detail="Invalid timestamp format")
+    except Exception as e:
+        logger.error("interview_abandon_error user_id=%s session_id=%s error=%s", 
+                    current_user.id, session_id, str(e))
+        raise HTTPException(status_code=500, detail="Failed to abandon session")

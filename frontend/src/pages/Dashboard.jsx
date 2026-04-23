@@ -29,26 +29,34 @@ export default function Dashboard() {
     const [error, setError] = useState(null);
     const [isAdmin, setIsAdmin] = useState(false);
 
-    const getUserId = () => {
+    const [userId, setUserId] = useState(null);
+
+    // Get user ID from localStorage safely
+    useEffect(() => {
         try {
-            const user = JSON.parse(localStorage.getItem('user'));
+            const userStr = localStorage.getItem('user');
+            const user = userStr ? JSON.parse(userStr) : null;
+            
             if (!user || !user.id) {
                 setError('User session not found. Please log in again.');
                 navigate('/auth');
-                return null;
+                return;
             }
-            return user.id;
+            
+            setUserId(user.id);
+            
+            // Check if user is admin
+            setIsAdmin(user.email === 'admin@example.com' || user.role === 'admin');
         } catch (error) {
             console.error('Failed to get user ID:', error);
             setError('Session corrupted. Please log in again.');
             navigate('/auth');
-            return null;
         }
-    };
+    }, [navigate]);
 
     const fetchDashboardStats = async () => {
-        const userId = getUserId();
-        if (userId === null) return;
+        if (!userId) return;
+        
         setLoading(true);
         setError(null);
         try {
@@ -65,12 +73,10 @@ export default function Dashboard() {
     };
 
     useEffect(() => {
-        fetchDashboardStats();
-        
-        // Check if user is admin
-        const user = JSON.parse(localStorage.getItem('user') || '{}');
-        setIsAdmin(user.email === 'admin@example.com' || user.role === 'admin');
-    }, []);
+        if (userId) {
+            fetchDashboardStats();
+        }
+    }, [userId]);
 
     // Calculate completion rates
     const mockCompletionRate = dashboardData.mock.total_attempted > 0 

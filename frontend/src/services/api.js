@@ -26,15 +26,22 @@ const getValidApiUrl = () => {
 
 export const API_BASE = getValidApiUrl();
 
+// General API for quick operations (auth, user data, etc.)
 const api = axios.create({
     baseURL: API_BASE,
-    timeout: 10000, // 10 second timeout for general endpoints
+    timeout: 8000, // 8 second timeout for general endpoints
 });
 
 // Create specialized API instances for different timeout requirements
 const longRunningApi = axios.create({
     baseURL: API_BASE,
-    timeout: 60000, // 60 second timeout for interview/mock/english endpoints
+    timeout: 120000, // 120 second timeout for LLM/RAG heavy operations
+});
+
+// Medium timeout API for standard operations
+const mediumApi = axios.create({
+    baseURL: API_BASE,
+    timeout: 30000, // 30 second timeout for standard operations
 });
 
 // Add request interceptor for long-running API

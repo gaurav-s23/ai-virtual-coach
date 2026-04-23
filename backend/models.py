@@ -30,6 +30,7 @@ class User(Base):
     # Relationships
     interviews = relationship("Interview", back_populates="candidate", cascade="all, delete-orphan")
     mocks = relationship("MockTest", back_populates="candidate", cascade="all, delete-orphan")
+    mock_sessions = relationship("MockSession", back_populates="candidate", cascade="all, delete-orphan")
     english_sessions = relationship("EnglishSession", back_populates="candidate", cascade="all, delete-orphan")
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
 
@@ -119,6 +120,8 @@ class MockSession(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     completed_at = Column(DateTime(timezone=True), nullable=True)
     abandoned_at = Column(DateTime(timezone=True), nullable=True)
+    
+    candidate = relationship("User", back_populates="mock_sessions")
 
 
 class GlobalMock(Base):

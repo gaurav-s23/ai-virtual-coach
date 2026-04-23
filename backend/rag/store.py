@@ -1,15 +1,18 @@
 import os
 import tempfile
-from typing import List
+import logging
+from typing import List, Optional
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
+from langchain_core.embeddings import Embeddings
 
+logger = logging.getLogger(__name__)
 
-_embedding_model = None
+_embedding_model: Optional[HuggingFaceEmbeddings] = None
 
 
 def _chroma_dir() -> str:
@@ -27,12 +30,72 @@ def get_embeddings() -> HuggingFaceEmbeddings:
             "HF_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
         ).strip()
         cache_folder = os.getenv("HF_HOME", "/app/.hf_cache")
-        _embedding_model = HuggingFaceEmbeddings(
-            model_name=model_name,
-            model_kwargs={"device": "cpu"},
-            encode_kwargs={"normalize_embeddings": True},
-            cache_folder=cache_folder,
-        )
+        
+        try:
+            logger.info(f"Loading HuggingFace embedding model: {model_name}")
+            
+            # Ensure cache directory exists
+            os.makedirs(cache_folder, exist_ok=True)
+            
+            _embedding_model = HuggingFaceEmbeddings(
+                model_name=model_name,
+                model_kwargs={"device": "cpu"},
+                encode_kwargs={"normalize_embeddings": True},
+                cache_folder=cache_folder,
+            )
+            
+            # Test the embedding model by trying to encode a simple text
+            test_embedding = _embedding_model.embed_query("test")
+            if not test_embedding or len(test_embedding) == 0:
+                raise ValueError("Embedding model returned empty result")
+                
+            logger.info(f"Successfully loaded embedding model with {len(test_embedding)} dimensions")
+            
+        except Exception as e:
+            logger.error(f"Failed to load HuggingFace embedding model '{model_name}': {e}")
+            
+            # Try fallback models in order of preference
+            fallback_models = [
+                "sentence-transformers/all-MiniLM-L6-v2",
+                "sentence-transformers/paraphrase-MiniLM-L6-v2",
+                "all-MiniLM-L6-v2"
+            ]
+            
+            for fallback_model in fallback_models:
+                if fallback_model == model_name:
+                    continue  # Skip the one that already failed
+                    
+                try:
+                    logger.info(f"Trying fallback model: {fallback_model}")
+                    _embedding_model = HuggingFaceEmbeddings(
+                        model_name=fallback_model,
+                        model_kwargs={"device": "cpu"},
+                        encode_kwargs={"normalize_embeddings": True},
+                        cache_folder=cache_folder,
+                    )
+                    
+                    # Test the fallback model
+                    test_embedding = _embedding_model.embed_query("test")
+                    if not test_embedding or len(test_embedding) == 0:
+                        raise ValueError("Fallback model returned empty result")
+                        
+                    logger.info(f"Successfully loaded fallback model: {fallback_model}")
+                    break
+                    
+                except Exception as fallback_error:
+                    logger.warning(f"Fallback model '{fallback_model}' also failed: {fallback_error}")
+                    continue
+            else:
+                # All fallbacks failed, raise a critical error
+                critical_error = (
+                    f"Failed to load any embedding model. "
+                    f"Primary: '{model_name}' failed with: {e}. "
+                    f"All fallback models also failed. "
+                    f"Please check internet connection and model availability."
+                )
+                logger.critical(critical_error)
+                raise RuntimeError(critical_error) from e
+    
     return _embedding_model
 
 

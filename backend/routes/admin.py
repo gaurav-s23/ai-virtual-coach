@@ -36,7 +36,6 @@ settings = get_settings()
 
 
 @router.post("/api/admin/login")
-@router.post("/admin/login")
 async def admin_login(data: AdminLoginRequest):
     if not settings.admin_email or not settings.admin_password:
         raise HTTPException(status_code=500, detail="Server error, try again")

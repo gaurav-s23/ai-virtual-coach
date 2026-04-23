@@ -39,17 +39,83 @@ def extract_resume_brief(file_bytes: bytes) -> str:
     if len(file_bytes) > 10 * 1024 * 1024:
         raise ValueError("File too large. Maximum size is 10MB.")
     
-    # Validate file type by checking PDF header
-    if len(file_bytes) < 4 or not file_bytes.startswith(b'%PDF'):
+    # Enhanced PDF header validation
+    if len(file_bytes) < 4:
+        raise ValueError("File too small to be a valid PDF.")
+    
+    # Check for PDF signature with multiple variants
+    pdf_signatures = [b'%PDF-', b'%PDF']
+    is_valid_pdf = any(file_bytes.startswith(sig) for sig in pdf_signatures)
+    
+    if not is_valid_pdf:
         raise ValueError("Invalid file format. Only PDF files are supported.")
+    
+    # Additional security checks
+    try:
+        # Check for PDF version in header
+        header_text = file_bytes[:20].decode('ascii', errors='ignore')
+        if not any(version in header_text for version in ['1.0', '1.1', '1.2', '1.3', '1.4', '1.5', '1.6', '1.7', '2.0']):
+            logger.warning("PDF version not recognized, proceeding with caution")
+        
+        # Check for potential malicious content patterns
+        suspicious_patterns = [
+            b'JavaScript',
+            b'/JS',
+            b'/JavaScript',
+            b'/OpenAction',
+            b'/AA',
+            b'/Launch',
+            b'/SubmitForm',
+            b'/URI',
+            b'/GoToR',
+            b'/GoToE'
+        ]
+        
+        for pattern in suspicious_patterns:
+            if pattern in file_bytes[:1024]:  # Check first 1KB for suspicious patterns
+                logger.warning(f"Suspicious PDF pattern detected: {pattern.decode('ascii', errors='ignore')}")
+                # We'll continue but log the warning
+        
+        # Validate PDF structure
+        if not b'obj' in file_bytes or not b'endobj' in file_bytes:
+            raise ValueError("Invalid PDF structure detected.")
+            
+    except UnicodeDecodeError:
+        logger.warning("PDF header contains non-ASCII characters, proceeding with caution")
     
     try:
         reader = PyPDF2.PdfReader(io.BytesIO(file_bytes))
+        
+        # Additional PDF validation
+        if not hasattr(reader, 'pages') or len(reader.pages) == 0:
+            raise ValueError("PDF contains no pages.")
+            
         # Limit number of pages to prevent processing issues
         if len(reader.pages) > 50:
             raise ValueError("File has too many pages. Maximum is 50 pages.")
         
-        text = "\n".join([p.extract_text() or "" for p in reader.pages]).strip()
+        # Check for encrypted PDFs
+        if reader.is_encrypted:
+            raise ValueError("Encrypted PDFs are not supported.")
+        
+        # Extract text with error handling for each page
+        text_parts = []
+        for page_num, page in enumerate(reader.pages):
+            try:
+                page_text = page.extract_text()
+                if page_text and page_text.strip():
+                    text_parts.append(page_text.strip())
+                elif page_num == 0:  # First page should have content
+                    logger.warning(f"Page {page_num + 1} contains no extractable text")
+            except Exception as page_error:
+                logger.warning(f"Failed to extract text from page {page_num + 1}: {page_error}")
+                continue
+        
+        text = "\n".join(text_parts).strip()
+        
+    except PyPDF2.PdfReadError as e:
+        logger.error(f"PDF read error: {str(e)}")
+        raise ValueError(f"Invalid or corrupted PDF file: {str(e)}")
     except Exception as e:
         # Log the specific error for debugging
         logger.error(f"PDF processing error: {str(e)}")
@@ -57,6 +123,15 @@ def extract_resume_brief(file_bytes: bytes) -> str:
     
     if not text:
         raise ValueError("PDF appears to be empty or contains no extractable text.")
+    
+    # Basic content validation
+    if len(text) < 50:  # Very short text might indicate a problem
+        logger.warning("Extracted text is very short, PDF might be image-only or corrupted")
+    
+    # Check for reasonable character content (not just special characters)
+    alphanumeric_chars = sum(1 for c in text if c.isalnum())
+    if alphanumeric_chars < len(text) * 0.3:  # Less than 30% alphanumeric
+        logger.warning("PDF contains mostly non-alphanumeric characters, might be image-based")
     
     # Validate extracted text length
     if len(text) < 50:
