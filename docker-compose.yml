@@ -1,79 +1,178 @@
+version: '3.8'
+
 services:
+  # PostgreSQL Database
   db:
     image: postgres:16-alpine
-    container_name: neuralhire_db
+    container_name: ai_virtual_coach_db
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD-postgres}
-      POSTGRES_DB: ${POSTGRES_DB-ai_virtual_coach}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-ai_virtual_coach}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 5s
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-ai_virtual_coach}"]
+      interval: 10s
       timeout: 5s
-      retries: 20
+      retries: 5
+      start_period: 30s
+    networks:
+      - app-network
 
+  # ChromaDB Vector Store
+  chroma:
+    image: chromadb/chroma:latest
+    container_name: ai_virtual_coach_chroma
+    restart: unless-stopped
+    ports:
+      - "8001:8000"
+    environment:
+      CHROMA_SERVER_HOST: 0.0.0.0
+      CHROMA_SERVER_HTTP_PORT: 8000
+      CHROMA_LOG_VERBOSE: "true"
+    volumes:
+      - chroma_data:/chroma/chroma
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - app-network
+
+  # Database Migration Service
   migration:
     build:
       context: ./backend
+      dockerfile: Dockerfile
+    container_name: ai_virtual_coach_migration
     command: sh -c "PYTHONPATH=/app alembic -c /app/alembic.ini upgrade head"
     env_file:
       - ./.env
     environment:
-      # Force Compose-network hostname (NOT localhost)
-      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER-postgres}:${POSTGRES_PASSWORD-postgres}@db:5432/${POSTGRES_DB-ai_virtual_coach}
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-ai_virtual_coach}
+      PYTHONPATH: /app
     depends_on:
       db:
         condition: service_healthy
+    networks:
+      - app-network
+    profiles:
+      - migration
 
+  # Backend API Service
   backend:
     build:
       context: ./backend
+      dockerfile: Dockerfile
+    container_name: ai_virtual_coach_backend
+    restart: unless-stopped
     env_file:
       - ./.env
     environment:
-      # Force Compose-network hostname (NOT localhost)
-      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER-postgres}:${POSTGRES_PASSWORD-postgres}@db:5432/${POSTGRES_DB-ai_virtual_coach}
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-ai_virtual_coach}
+      CHROMA_HOST: chroma
+      CHROMA_PORT: 8000
       HF_HOME: /app/.hf_cache
       TRANSFORMERS_CACHE: /app/.hf_cache
       SENTENCE_TRANSFORMERS_HOME: /app/.hf_cache
       HF_HUB_READ_TIMEOUT: "60"
       HF_HUB_ETAG_TIMEOUT: "60"
+      PYTHONPATH: /app
     ports:
       - "8000:8000"
     volumes:
       - ./backend:/app
-      - ./backend/.chroma:/app/.chroma
-      - ./backend/.hf_cache:/app/.hf_cache
+      - backend_chroma:/app/.chroma
+      - backend_hf_cache:/app/.hf_cache
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     depends_on:
-      migration:
-        condition: service_completed_successfully
       db:
         condition: service_healthy
+      chroma:
+        condition: service_healthy
+    networks:
+      - app-network
 
+  # Frontend Development Service
   frontend:
     build:
       context: ./frontend
+      dockerfile: Dockerfile
       target: dev
+    container_name: ai_virtual_coach_frontend
+    restart: unless-stopped
     env_file:
       - ./.env
     environment:
       CHOKIDAR_USEPOLLING: "true"
       WATCHPACK_POLLING: "true"
+      VITE_API_URL: http://localhost:8000
     ports:
       - "5173:5173"
-    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
     volumes:
       - ./frontend:/app
       - frontend_node_modules:/app/node_modules
     depends_on:
       backend:
-        condition: service_started
+        condition: service_healthy
+    networks:
+      - app-network
+    profiles:
+      - development
 
+  # Frontend Production Service
+  frontend-prod:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: production
+    container_name: ai_virtual_coach_frontend_prod
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - app-network
+    profiles:
+      - production
+
+# Named volumes for data persistence
 volumes:
   postgres_data:
+    driver: local
+  chroma_data:
+    driver: local
+  backend_chroma:
+    driver: local
+  backend_hf_cache:
+    driver: local
   frontend_node_modules:
+    driver: local
+
+# Custom network
+networks:
+  app-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
 

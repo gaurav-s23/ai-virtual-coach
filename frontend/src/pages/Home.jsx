@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { 
   Mic, GraduationCap, MessageSquare, LayoutDashboard, 
-  Lock, ArrowRight, Activity, Target, ShieldCheck, TrendingUp, Search, Zap
+  Lock, ArrowRight,Cpu, Activity, Target, ShieldCheck, TrendingUp,CheckCircle, Search, Zap,Terminal,Globe,
 } from 'lucide-react';
 
 const BackgroundEffect = () => (

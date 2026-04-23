@@ -1,15 +1,24 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import List, Literal, Optional
 
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
+logger = logging.getLogger(__name__)
+
 try:
-    from ..rag.store import retrieve
-except ImportError:
     from rag.store import retrieve
+except ImportError as e:
+    logger.error(f"Import error in tools.py: {e}")
+    # Fallback imports for development
+    try:
+        from rag.store import retrieve
+    except ImportError as fallback_error:
+        logger.error(f"Fallback import error in tools.py: {fallback_error}")
+        raise SystemExit(f"Failed to import required modules in tools.py: {fallback_error}")
 
 
 class ResumeSearchInput(BaseModel):

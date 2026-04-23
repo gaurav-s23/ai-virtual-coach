@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+# Configure logger
+logger = logging.getLogger(__name__)
+
 try:
-    from .. import models
-    from ..database import get_db
-    from ..core.security import (
+    from models import User
+    from database import get_db
+    from core.security import (
         get_current_user,
         hash_password,
         issue_token_pair,
@@ -14,21 +18,27 @@ try:
         validate_password_length,
         verify_password,
     )
-    from ..auth.security import hash_refresh_token
-    from .schemas import LoginLegacyResponse, LoginRequest, MeResponse, RefreshRequest, SignupRequest, TokenResponse
-except ImportError:
-    import models  # type: ignore
-    from database import get_db  # type: ignore
-    from core.security import (  # type: ignore
-        get_current_user,
-        hash_password,
-        issue_token_pair,
-        rotate_refresh_token,
-        validate_password_length,
-        verify_password,
-    )
-    from auth.security import hash_refresh_token  # type: ignore
-    from routes.schemas import LoginLegacyResponse, LoginRequest, MeResponse, RefreshRequest, SignupRequest, TokenResponse  # type: ignore
+    from auth.security import hash_refresh_token
+    from routes.schemas import LoginLegacyResponse, LoginRequest, MeResponse, RefreshRequest, SignupRequest, TokenResponse
+except ImportError as e:
+    logger.error(f"Import error in auth.py: {e}")
+    # Fallback imports for development
+    try:
+        import models
+        from database import get_db
+        from core.security import (
+            get_current_user,
+            hash_password,
+            issue_token_pair,
+            rotate_refresh_token,
+            validate_password_length,
+            verify_password,
+        )
+        from auth.security import hash_refresh_token
+        from routes.schemas import LoginLegacyResponse, LoginRequest, MeResponse, RefreshRequest, SignupRequest, TokenResponse
+    except ImportError as fallback_error:
+        logger.error(f"Fallback import error in auth.py: {fallback_error}")
+        raise SystemExit(f"Failed to import required modules in auth.py: {fallback_error}")
 
 router = APIRouter(prefix="/api", tags=["Auth"])
 
@@ -37,7 +47,7 @@ router = APIRouter(prefix="/api", tags=["Auth"])
 async def login(data: LoginRequest, db: Session = Depends(get_db)):
     email = (data.email or "").strip().lower()
     validate_password_length(data.password)
-    user = db.query(models.User).filter(models.User.email == email).first()
+    user = db.query(User).filter(User.email == email).first()
     if not user or not verify_password(data.password, user.password):
         raise HTTPException(status_code=400, detail="Invalid input")
     tokens = issue_token_pair(db=db, user=user)
@@ -79,7 +89,7 @@ async def auth_signup(data: SignupRequest, db: Session = Depends(get_db)):
 async def auth_login(data: LoginRequest, db: Session = Depends(get_db)):
     email = (data.email or "").strip().lower()
     validate_password_length(data.password)
-    user = db.query(models.User).filter(models.User.email == email).first()
+    user = db.query(User).filter(User.email == email).first()
     if not user or not verify_password(data.password, user.password):
         raise HTTPException(status_code=400, detail="Invalid input")
     tokens = issue_token_pair(db=db, user=user)

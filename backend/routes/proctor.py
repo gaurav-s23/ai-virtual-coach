@@ -1,14 +1,23 @@
+import logging
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from typing import Optional
 import json, os
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 try:
-    from .. import models
-    from ..core.security import get_current_user
-except ImportError:
-    import models  # type: ignore
-    from core.security import get_current_user  # type: ignore
+    import models
+    from core.security import get_current_user
+except ImportError as e:
+    logger.error(f"Import error in proctor.py: {e}")
+    # Fallback imports for development
+    try:
+        import models
+        from core.security import get_current_user
+    except ImportError as fallback_error:
+        logger.error(f"Fallback import error in proctor.py: {fallback_error}")
+        raise SystemExit(f"Failed to import required modules in proctor.py: {fallback_error}")
 
 router = APIRouter(tags=["proctor"])
 

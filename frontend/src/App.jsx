@@ -9,6 +9,7 @@ import EnglishPractice from './pages/EnglishPractice';
 import Evaluation from './pages/Evaluation';
 import AdminLogin from './pages/AdminLogin';
 import AdminDashboard from './pages/AdminDashboard';
+import AdminPanel from './pages/AdminPanel';
 
 const ProtectedRoute = ({ children }) => {
     const token = localStorage.getItem('token');
@@ -41,6 +42,43 @@ const ProtectedRoute = ({ children }) => {
         localStorage.removeItem('token');
         localStorage.removeItem('user');
         return <Navigate to="/auth" />;
+    }
+};
+
+const AdminProtectedRoute = ({ children }) => {
+    const adminToken = localStorage.getItem('admin_token');
+    
+    if (!adminToken) {
+        return <Navigate to="/admin/login" />;
+    }
+    
+    // Basic admin token validation
+    try {
+        const parts = adminToken.split('.');
+        if (parts.length !== 3) {
+            localStorage.removeItem('admin_token');
+            return <Navigate to="/admin/login" />;
+        }
+        
+        // Check if token is expired
+        const payload = JSON.parse(atob(parts[1]));
+        const currentTime = Date.now() / 1000;
+        if (payload.exp && payload.exp < currentTime) {
+            localStorage.removeItem('admin_token');
+            return <Navigate to="/admin/login" />;
+        }
+        
+        // Check if role is admin
+        if (payload.role !== 'admin') {
+            localStorage.removeItem('admin_token');
+            return <Navigate to="/admin/login" />;
+        }
+        
+        return children;
+    } catch (error) {
+        console.error('Admin token validation failed:', error);
+        localStorage.removeItem('admin_token');
+        return <Navigate to="/admin/login" />;
     }
 };
 
@@ -82,7 +120,9 @@ function App() {
                 } />
 
                 <Route path="/admin/login" element={<AdminLogin />} />
-                <Route path="/admin" element={<AdminDashboard />} />
+                <Route path="/admin" element={
+                    <AdminProtectedRoute> <AdminPanel /> </AdminProtectedRoute>
+                } />
 
                 {/* Fallback Route */}
                 <Route path="*" element={<Navigate to="/" />} />

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Mic, Send, Loader2, MicOff, MessageSquare, XCircle, Zap, Volume2, Clock, ArrowLeft, Square } from 'lucide-react';
-import api from '../services/api';
+import { Mic, Send, Loader2, MicOff, MessageSquare, XCircle, Zap, Volume2, Clock, ArrowLeft, Square, AlertTriangle } from 'lucide-react';
+import api, { startInterview, sendInterviewMessage, eventSourceManager } from '../services/api';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export default function LiveInterview() {
@@ -25,8 +25,68 @@ export default function LiveInterview() {
     const [sessionRecovered, setSessionRecovered] = useState(false);
     const [sessionLoading, setSessionLoading] = useState(false);
     const [sessionError, setSessionError] = useState(null);
+    const [showEndDialog, setShowEndDialog] = useState(false);
+    const [sessionStarted, setSessionStarted] = useState(false);
 
     const hasValidSession = !!session_id && !!skill_questions?.length;
+
+    // --- Abandoned Session Tracking ---
+    const markSessionAbandoned = async () => {
+        if (sessionStarted && session_id) {
+            try {
+                await api.post('/api/interview/abandon-session', {
+                    session_id: session_id,
+                    abandoned_at: new Date().toISOString()
+                });
+            } catch (error) {
+                console.error('Failed to mark session as abandoned:', error);
+            }
+        }
+    };
+
+    useEffect(() => {
+        const handleBeforeUnload = (e) => {
+            if (sessionStarted) {
+                markSessionAbandoned();
+                e.preventDefault();
+                e.returnValue = '';
+            }
+        };
+
+        window.addEventListener('beforeunload', handleBeforeUnload);
+        return () => {
+            window.removeEventListener('beforeunload', handleBeforeUnload);
+            if (sessionStarted) {
+                markSessionAbandoned();
+            }
+        };
+    }, [sessionStarted, session_id]);
+
+    // --- End Interview with Confirmation ---
+    const handleEndInterview = () => {
+        setShowEndDialog(true);
+    };
+
+    const confirmEndInterview = async () => {
+        setShowEndDialog(false);
+        if (sessionStarted && session_id) {
+            try {
+                await api.post('/api/interview/end-session', {
+                    session_id: session_id,
+                    ended_at: new Date().toISOString(),
+                    performance_log: performanceLog,
+                    status: 'completed'
+                });
+            } catch (error) {
+                console.error('Failed to end session properly:', error);
+            }
+        }
+        finishInterview("Interview ended by user");
+    };
+
+    const cancelEndInterview = () => {
+        setShowEndDialog(false);
+    };
 
     const [questions, setQuestions] = useState([]);
     const [skillQuestions, setSkillQuestions] = useState([]);
@@ -162,6 +222,10 @@ export default function LiveInterview() {
 
     // INTERVIEW LIFECYCLE
     useEffect(() => {
+        if (!hasValidSession) return;
+        
+        setSessionStarted(true);
+        
         // Camera setup
         navigator.mediaDevices.getUserMedia({ video: true, audio: true })
             .then(stream => { if (videoRef.current) videoRef.current.srcObject = stream; })
@@ -307,71 +371,77 @@ export default function LiveInterview() {
             setUserInput('');
             return;
         }
-        
+
         setMessages(prev => [...prev, { role: 'user', text: answer }]);
         setLoading(true);
+        setUserInput('');
 
         try {
-            // Get immediate feedback for the current answer
-            const res = await api.post('/api/interview/chat', {
-                answer, question: currentQ, context, session_id, time_taken_seconds: timeTaken
-            });
-
-            const feedback = res.data.reply;
-            // Update confidence score from backend analysis
-            if (res.data.confidence_score) {
-                setConfidenceScore(res.data.confidence_score);
-            }
-            // Capture updated log in local variable for immediate use in Pivot logic
-            const updatedLog = [...performanceLog, { question: currentQ, answer, feedback, confidence_score: res.data.confidence_score }];
-            setPerformanceLog(updatedLog);
-            setMessages(prev => [...prev, { role: 'ai', text: feedback, type: 'feedback' }]);
+            // Use streaming API for interview feedback
+            const streamUrl = sendInterviewMessage(session_id, answer, true);
             
-            speak(feedback, async () => {
-                if (phase === 'skills' && currentIndex >= skillQuestions.length - 1) {
-                    setQuestions(projectQuestions);
-                    setCurrentIndex(0);
-                    setPhase('projects');
-                    setStatusText("Project round started");
-                    const msg = "Good. Now let's talk about your projects.";
-                    setMessages(prev => [...prev, { role: 'ai', text: msg }]);
-                    speak(msg, () => askQuestion(0, projectQuestions));
-                } else if (phase === 'projects' && currentIndex >= projectQuestions.length - 1) {
-                    setLoading(true);
-                    try {
-                        const pivotRes = await api.post('/api/interview/pivot', {
-                            history: updatedLog,
-                            context,
-                            role,
-                            session_id
+            // Create streaming connection for real-time feedback
+            let accumulatedFeedback = '';
+            let confidenceScore = null;
+            
+            const streamId = eventSourceManager.createEventSource(
+                `${api.API_BASE}${streamUrl}`,
+                (data, streamId) => {
+                    if (data.type === 'content' && data.chunk) {
+                        // Accumulate streaming feedback
+                        accumulatedFeedback += data.chunk;
+                        
+                        // Update message with partial content
+                        setMessages(prev => {
+                            const updated = [...prev];
+                            const lastMessage = updated[updated.length - 1];
+                            if (lastMessage && lastMessage.type === 'streaming') {
+                                lastMessage.text = accumulatedFeedback;
+                            } else {
+                                updated.push({ role: 'ai', text: accumulatedFeedback, type: 'streaming' });
+                            }
+                            return updated;
+                        });
+                    } else if (data.type === 'complete') {
+                        // Streaming complete - finalize message
+                        const finalFeedback = data.feedback || accumulatedFeedback;
+                        
+                        // Update confidence score from backend analysis
+                        if (data.confidence_score) {
+                            setConfidenceScore(data.confidence_score);
+                            confidenceScore = data.confidence_score;
+                        }
+                        
+                        // Finalize message
+                        setMessages(prev => {
+                            const updated = [...prev];
+                            const lastMessage = updated[updated.length - 1];
+                            if (lastMessage && lastMessage.type === 'streaming') {
+                                lastMessage.text = finalFeedback;
+                                lastMessage.type = 'feedback';
+                            } else {
+                                updated.push({ role: 'ai', text: finalFeedback, type: 'feedback' });
+                            }
+                            return updated;
                         });
                         
-                        const followups = pivotRes.data.deep_dives || [];
-                        const pivotIntro = `Analysis complete. ${pivotRes.data.analysis} Let me ask some deeper questions.`;
-                        
-                        setMessages(prev => [...prev, { role: 'ai', text: pivotIntro }]);
-                        setQuestions(followups);
-                        setCurrentIndex(0);
-                        setPhase('followup');
-                        setStatusText("Follow-up round started");
+                        // Continue with TTS and next question logic
+                        continueInterviewFlow(finalFeedback, confidenceScore);
+                    } else if (data.type === 'error') {
+                        console.error('Streaming error:', data.error);
+                        setMessages(prev => [...prev, { role: 'ai', text: `Error: ${data.error}`, type: 'error' }]);
                         setLoading(false);
-
-                        speak(pivotIntro, () => {
-                            askQuestion(0, followups);
-                        });
-                    } catch (e) {
-                        console.error("Pivot Trigger Failed:", e);
-                        finishInterview("System Error: Critical failure in pivot module. Saving data.");
                     }
-                } else if (phase === 'followup' && currentIndex >= questions.length - 1) {
-                    finishInterview();
-                } else {
-                    const nextIdx = currentIndex + 1;
-                    setCurrentIndex(nextIdx);
-                    setStatusText(`Question ${nextIdx + 1}...`);
-                    askQuestion(nextIdx);
+                },
+                (error, streamId) => {
+                    console.error('SSE error:', error);
+                    setMessages(prev => [...prev, { role: 'ai', text: `Connection error: ${error.message || 'Unknown error'}`, type: 'error' }]);
+                    setLoading(false);
                 }
-            });
+            );
+            
+            return; // Exit early, continueInterviewFlow will handle the rest
+
         } catch (err) {
             console.error("Transmission Error:", err);
             if (err?.response?.status === 404) {
@@ -386,14 +456,67 @@ export default function LiveInterview() {
         }
     };
 
-    const finishInterview = (msg) => {
-        const endMsg = msg || "Simulation complete. Transferring data to Intelligence Feed.";
-        setMessages(prev => [...prev, { role: 'ai', text: endMsg }]);
-        speak(endMsg, () => {
-            // Pass the final report to dashboard
-            navigate('/dashboard', { state: { report: performanceLog } });
-        });
-    };
+// Helper function to continue interview flow after streaming
+const continueInterviewFlow = async (feedback, confidenceScore) => {
+    const currentQ = questions[currentIndex];
+    const updatedLog = [...performanceLog, { question: currentQ, answer, feedback, confidence_score: confidenceScore }];
+    setPerformanceLog(updatedLog);
+    
+    speak(feedback, async () => {
+        if (phase === 'skills' && currentIndex >= skillQuestions.length - 1) {
+            setQuestions(projectQuestions);
+            setCurrentIndex(0);
+            setPhase('projects');
+            setStatusText("Project round started");
+            const msg = "Good. Now let's talk about your projects.";
+            setMessages(prev => [...prev, { role: 'ai', text: msg }]);
+            speak(msg, () => askQuestion(0, projectQuestions));
+        } else if (phase === 'projects' && currentIndex >= projectQuestions.length - 1) {
+            setLoading(true);
+            try {
+                const pivotRes = await api.post('/api/interview/pivot', {
+                    history: updatedLog,
+                    context,
+                    role,
+                    session_id
+                });
+                
+                const followups = pivotRes.data.deep_dives || [];
+                const pivotIntro = `Analysis complete. ${pivotRes.data.analysis} Let me ask some deeper questions.`;
+                
+                setMessages(prev => [...prev, { role: 'ai', text: pivotIntro }]);
+                setQuestions(followups);
+                setCurrentIndex(0);
+                setPhase('followup');
+                setStatusText("Follow-up round started");
+                setLoading(false);
+
+                speak(pivotIntro, () => {
+                    askQuestion(0, followups);
+                });
+            } catch (e) {
+                console.error("Pivot Trigger Failed:", e);
+                finishInterview("System Error: Critical failure in pivot module. Saving data.");
+            }
+        } else if (phase === 'followup' && currentIndex >= questions.length - 1) {
+            finishInterview();
+        } else {
+            const nextIdx = currentIndex + 1;
+            setCurrentIndex(nextIdx);
+            setStatusText(`Question ${nextIdx + 1}...`);
+            askQuestion(nextIdx);
+        }
+    });
+};
+
+const finishInterview = (msg) => {
+    const endMsg = msg || "Simulation complete. Transferring data to Intelligence Feed.";
+    setMessages(prev => [...prev, { role: 'ai', text: endMsg }]);
+    speak(endMsg, () => {
+        // Pass the final report to dashboard
+        navigate('/dashboard', { state: { report: performanceLog } });
+    });
+};
 
     const formatTime = (s) => `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`;
 
@@ -454,10 +577,46 @@ export default function LiveInterview() {
     }
 
     return (
-        <div className="h-screen bg-[#030303] text-slate-200 flex overflow-hidden font-sans selection:bg-blue-500/30">
+        <div className="h-screen bg-[#030303] text-slate-200 flex overflow-hidden font-sans selection:bg-blue-500/30 relative">
+            {/* Fixed Header with Back/End Buttons */}
+            <div className="fixed top-0 left-0 right-0 z-50 bg-black/80 backdrop-blur-xl border-b border-white/10 px-6 py-4">
+                <div className="flex justify-between items-center max-w-full">
+                    <button
+                        onClick={() => {
+                            markSessionAbandoned();
+                            navigate('/dashboard');
+                        }}
+                        className="px-4 py-2.5 rounded-2xl bg-gray-600/20 hover:bg-gray-600/30 border border-gray-500/30 text-gray-400 hover:text-gray-300 transition-all flex items-center gap-2"
+                    >
+                        <ArrowLeft size={16} />
+                        <span className="text-xs font-black uppercase tracking-widest">Back</span>
+                    </button>
+                    <div className="flex items-center gap-4">
+                        <div className={`px-5 py-2.5 rounded-2xl border backdrop-blur-xl flex items-center gap-3 transition-colors ${timeLeft < 300 ? 'text-red-500 border-red-500/40 bg-red-500/5 animate-pulse' : 'border-white/10 bg-white/5'}`}>
+                            <Clock size={18} />
+                            <span className="font-mono text-lg font-black">{formatTime(timeLeft)}</span>
+                        </div>
+                        <div className="px-5 py-2.5 rounded-2xl bg-blue-600 text-white text-xs font-black shadow-[0_0_25px_rgba(37,99,235,0.4)] flex items-center">
+                            {phase === 'skills'
+                                ? `SKILL ${currentIndex + 1} / ${skillQuestions.length || 5}`
+                                : phase === 'projects'
+                                    ? `PROJECT ${currentIndex + 1} / ${projectQuestions.length || 5}`
+                                    : `FOLLOWUP ${currentIndex + 1} / ${questions.length || 5}`
+                            }
+                        </div>
+                        <button
+                            onClick={handleEndInterview}
+                            className="px-4 py-2.5 rounded-2xl bg-red-600/20 hover:bg-red-600/30 border border-red-500/30 text-red-400 hover:text-red-300 transition-all flex items-center gap-2"
+                        >
+                            <Square size={16} />
+                            <span className="text-xs font-black uppercase tracking-widest">End Interview</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
             
             {/* LEFT SIDE (NEURAL HUD) */}
-            <div className="flex-1 relative flex flex-col p-6 space-y-6">
+            <div className="flex-1 relative flex flex-col p-6 space-y-6 pt-20">
                 <div className="flex justify-between items-center z-10">
                     <div className="flex items-center gap-4">
                         <div className="p-2.5 bg-blue-600/20 rounded-xl border border-blue-500/30 shadow-[0_0_20px_rgba(37,99,235,0.2)]">
@@ -483,22 +642,9 @@ export default function LiveInterview() {
                                 ? `SKILL ${currentIndex + 1} / ${skillQuestions.length || 5}`
                                 : phase === 'projects'
                                     ? `PROJECT ${currentIndex + 1} / ${projectQuestions.length || 5}`
-                                    : `FOLLOWUP ${currentIndex + 1} / ${questions.length || 5}`}
+                                    : `FOLLOWUP ${currentIndex + 1} / ${questions.length || 5}`
+                            }
                         </div>
-                        <button
-                            onClick={() => navigate('/dashboard')}
-                            className="px-4 py-2.5 rounded-2xl bg-gray-600/20 hover:bg-gray-600/30 border border-gray-500/30 text-gray-400 hover:text-gray-300 transition-all flex items-center gap-2"
-                        >
-                            <ArrowLeft size={16} />
-                            <span className="text-xs font-black uppercase tracking-widest">Back</span>
-                        </button>
-                        <button
-                            onClick={() => finishInterview("Interview ended by user")}
-                            className="px-4 py-2.5 rounded-2xl bg-red-600/20 hover:bg-red-600/30 border border-red-500/30 text-red-400 hover:text-red-300 transition-all flex items-center gap-2"
-                        >
-                            <Square size={16} />
-                            <span className="text-xs font-black uppercase tracking-widest">End Interview</span>
-                        </button>
                     </div>
                 </div>
 
@@ -644,6 +790,49 @@ export default function LiveInterview() {
                     </p>
                 </div>
             </div>
+
+            {/* Confirmation Dialog */}
+            <AnimatePresence>
+                {showEndDialog && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-6"
+                    >
+                        <motion.div
+                            initial={{ scale: 0.9, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            exit={{ scale: 0.9, opacity: 0 }}
+                            className="bg-white/[0.03] border border-white/10 rounded-[3rem] p-8 max-w-md w-full backdrop-blur-3xl shadow-2xl"
+                        >
+                            <div className="flex items-center gap-4 mb-6">
+                                <div className="p-3 bg-red-500/20 rounded-full text-red-500">
+                                    <AlertTriangle size={24} />
+                                </div>
+                                <h3 className="text-2xl font-bold text-white">End Interview?</h3>
+                            </div>
+                            <p className="text-gray-300 mb-8 leading-relaxed">
+                                Are you sure you want to end the interview? Your session will be concluded and you won't be able to continue.
+                            </p>
+                            <div className="flex gap-4">
+                                <button
+                                    onClick={cancelEndInterview}
+                                    className="flex-1 px-6 py-3 bg-gray-600/20 hover:bg-gray-600/30 border border-gray-500/30 text-gray-400 hover:text-gray-300 rounded-2xl font-bold transition-all"
+                                >
+                                    No, Continue
+                                </button>
+                                <button
+                                    onClick={confirmEndInterview}
+                                    className="flex-1 px-6 py-3 bg-red-600 hover:bg-red-500 text-white rounded-2xl font-bold transition-all"
+                                >
+                                    Yes, End Interview
+                                </button>
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
 
             {/* Global Grainy Noise Overlays */}
             <div className="fixed inset-0 pointer-events-none opacity-[0.015] z-50">

@@ -9,15 +9,21 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 try:
-    from ..database import get_db
-    from ..core.security import get_current_user
-    from ..models import User
-    from ..services.vision_service import VisionService, VisionAnalysis
-except ImportError:
-    from database import get_db  # type: ignore
-    from core.security import get_current_user  # type: ignore
-    from models import User  # type: ignore
-    from services.vision_service import VisionService, VisionAnalysis  # type: ignore
+    from database import get_db
+    from core.security import get_current_user
+    from models import User
+    from services.vision_service import VisionService, VisionAnalysis
+except ImportError as e:
+    logger.error(f"Import error in vision.py: {e}")
+    # Fallback imports for development
+    try:
+        from database import get_db
+        from core.security import get_current_user
+        from models import User
+        from services.vision_service import VisionService, VisionAnalysis
+    except ImportError as fallback_error:
+        logger.error(f"Fallback import error in vision.py: {fallback_error}")
+        raise SystemExit(f"Failed to import required modules in vision.py: {fallback_error}")
 
 logger = logging.getLogger("ai_virtual_coach.vision")
 

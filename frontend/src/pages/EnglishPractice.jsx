@@ -3,10 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { 
     BookOpen, MessageSquare, Award, Clock, Mic, MicOff, 
     Send, Zap, ChevronRight, BarChart3, Languages, Globe, 
-    RefreshCcw, Loader2, Volume2, XCircle
+    RefreshCcw, Loader2, Volume2, XCircle, ArrowLeft, Square, AlertTriangle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import api from '../services/api';
+import api, { startEnglishSession, sendEnglishMessage, eventSourceManager } from '../services/api';
 
 // --- THEMED BACKGROUND (Deep Navy & Light Blue Glows) ---
 const BackgroundEffect = () => (
@@ -34,9 +34,70 @@ export default function EnglishPractice() {
     const [isAiSpeaking, setIsAiSpeaking] = useState(false);
     const [loading, setLoading] = useState(false);
     const [report, setReport] = useState(null);
+    const [showEndDialog, setShowEndDialog] = useState(false);
+    const [sessionId, setSessionId] = useState(null);
+    const [sessionStarted, setSessionStarted] = useState(false);
 
     const recognitionRef = useRef(null);
     const chatEndRef = useRef(null);
+
+    // --- Abandoned Session Tracking ---
+    const markSessionAbandoned = async () => {
+        if (sessionStarted && sessionId) {
+            try {
+                await api.post('/api/english/abandon-session', {
+                    session_id: sessionId,
+                    abandoned_at: new Date().toISOString()
+                });
+            } catch (error) {
+                console.error('Failed to mark session as abandoned:', error);
+            }
+        }
+    };
+
+    useEffect(() => {
+        const handleBeforeUnload = (e) => {
+            if (sessionStarted) {
+                markSessionAbandoned();
+                e.preventDefault();
+                e.returnValue = '';
+            }
+        };
+
+        window.addEventListener('beforeunload', handleBeforeUnload);
+        return () => {
+            window.removeEventListener('beforeunload', handleBeforeUnload);
+            if (sessionStarted) {
+                markSessionAbandoned();
+            }
+        };
+    }, [sessionStarted, sessionId]);
+
+    // --- End Practice with Confirmation ---
+    const handleEndPractice = () => {
+        setShowEndDialog(true);
+    };
+
+    const confirmEndPractice = async () => {
+        setShowEndDialog(false);
+        if (sessionStarted && sessionId) {
+            try {
+                await api.post('/api/english/end-session', {
+                    session_id: sessionId,
+                    ended_at: new Date().toISOString(),
+                    messages: messages,
+                    status: 'completed'
+                });
+            } catch (error) {
+                console.error('Failed to end session properly:', error);
+            }
+        }
+        navigate('/dashboard');
+    };
+
+    const cancelEndPractice = () => {
+        setShowEndDialog(false);
+    };
 
     // --- 1. INITIALIZATION ---
     useEffect(() => {
@@ -88,6 +149,16 @@ export default function EnglishPractice() {
             const res = await api.post('/api/english/questions', { topic });
             setQuestions(res.data.questions);
             setStep(3);
+            const newSessionId = res.data.session_id || `english_${Date.now()}`;
+            setSessionId(newSessionId);
+            setSessionStarted(true);
+            
+            // Mark session as started
+            await api.post('/api/english/start-session', {
+                session_id: newSessionId,
+                topic: topic
+            });
+            
             const welcome = `Simulation initialized. Our topic is "${topic}". Let's begin. ${res.data.questions[0]}`;
             setMessages([{ role: 'ai', text: welcome }]);
             speak(welcome, () => toggleListening(true));
@@ -121,6 +192,7 @@ export default function EnglishPractice() {
         const currentMsgBatch = [...messages, { role: 'user', text: answer }];
         setMessages(currentMsgBatch);
         setLoading(true);
+        setUserInput("");
 
         try {
             // After 5 primary questions, transition into deep-dive round.
@@ -145,18 +217,73 @@ export default function EnglishPractice() {
                 setReport(res.data);
                 setStep(4);
             } 
-            // Normal sequential flow
+            // Normal sequential flow - use streaming for real-time feedback
             else {
-                const nextIdx = currentIndex + 1;
-                setCurrentIndex(nextIdx);
-                setMessages(prev => [...prev, { role: 'ai', text: questions[nextIdx] }]);
-                speak(questions[nextIdx], () => toggleListening(true));
+                // Use streaming API for English practice feedback
+                const streamUrl = sendEnglishMessage(sessionId, answer, true);
+                
+                // Create streaming connection for real-time feedback
+                let accumulatedFeedback = '';
+                
+                const streamId = eventSourceManager.createEventSource(
+                    `${api.API_BASE}${streamUrl}`,
+                    (data, streamId) => {
+                        if (data.type === 'content' && data.chunk) {
+                            // Accumulate streaming feedback
+                            accumulatedFeedback += data.chunk;
+                            
+                            // Update message with partial content
+                            setMessages(prev => {
+                                const updated = [...prev];
+                                const lastMessage = updated[updated.length - 1];
+                                if (lastMessage && lastMessage.type === 'streaming') {
+                                    lastMessage.text = accumulatedFeedback;
+                                } else {
+                                    updated.push({ role: 'ai', text: accumulatedFeedback, type: 'streaming' });
+                                }
+                                return updated;
+                            });
+                        } else if (data.type === 'complete') {
+                            // Streaming complete - finalize message and continue
+                            const finalFeedback = data.feedback || accumulatedFeedback;
+                            
+                            // Finalize message
+                            setMessages(prev => {
+                                const updated = [...prev];
+                                const lastMessage = updated[updated.length - 1];
+                                if (lastMessage && lastMessage.type === 'streaming') {
+                                    lastMessage.text = finalFeedback;
+                                    lastMessage.type = 'feedback';
+                                } else {
+                                    updated.push({ role: 'ai', text: finalFeedback, type: 'feedback' });
+                                }
+                                return updated;
+                            });
+                            
+                            // Continue with next question
+                            const nextIdx = currentIndex + 1;
+                            setCurrentIndex(nextIdx);
+                            setMessages(prev => [...prev, { role: 'ai', text: questions[nextIdx] }]);
+                            speak(questions[nextIdx], () => toggleListening(true));
+                            setLoading(false);
+                        } else if (data.type === 'error') {
+                            console.error('Streaming error:', data.error);
+                            setMessages(prev => [...prev, { role: 'ai', text: `Error: ${data.error}`, type: 'error' }]);
+                            setLoading(false);
+                        }
+                    },
+                    (error, streamId) => {
+                        console.error('SSE error:', error);
+                        setMessages(prev => [...prev, { role: 'ai', text: `Connection error: ${error.message || 'Unknown error'}`, type: 'error' }]);
+                        setLoading(false);
+                    }
+                );
+                
+                return; // Exit early, streaming will handle the rest
             }
         } catch (e) {
             console.error(e);
-        } finally {
             setLoading(false);
-            setUserInput("");
         }
     };
 
@@ -210,8 +337,36 @@ export default function EnglishPractice() {
             {/* STEP 3: THE CHAT SIMULATION (5+5) */}
             {step === 3 && (
                 <div className="relative z-10 h-screen flex max-w-[1400px] mx-auto overflow-hidden">
+                    {/* Fixed Header with Back/End Buttons */}
+                    <div className="fixed top-0 left-0 right-0 z-50 bg-black/80 backdrop-blur-xl border-b border-white/10 px-6 py-4">
+                        <div className="flex justify-between items-center max-w-full">
+                            <button
+                                onClick={() => {
+                                    markSessionAbandoned();
+                                    navigate('/dashboard');
+                                }}
+                                className="px-4 py-2.5 rounded-2xl bg-gray-600/20 hover:bg-gray-600/30 border border-gray-500/30 text-gray-400 hover:text-gray-300 transition-all flex items-center gap-2"
+                            >
+                                <ArrowLeft size={16} />
+                                <span className="text-xs font-black uppercase tracking-widest">Back</span>
+                            </button>
+                            <div className="flex items-center gap-4">
+                                <div className="px-5 py-2.5 rounded-2xl bg-cyan-600 text-white text-xs font-black shadow-[0_0_25px_rgba(6,182,212,0.4)] flex items-center">
+                                    {phase === 'primary' ? `INITIAL ${currentIndex + 1}/5` : `DEEP DIVE ${currentIndex + 1}/5`}
+                                </div>
+                                <button
+                                    onClick={handleEndPractice}
+                                    className="px-4 py-2.5 rounded-2xl bg-red-600/20 hover:bg-red-600/30 border border-red-500/30 text-red-400 hover:text-red-300 transition-all flex items-center gap-2"
+                                >
+                                    <Square size={16} />
+                                    <span className="text-xs font-black uppercase tracking-widest">End Practice</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    
                     {/* HUD SIDEBAR */}
-                    <div className="w-96 p-10 border-r border-white/5 flex flex-col justify-between bg-black/20 backdrop-blur-md">
+                    <div className="w-96 p-10 border-r border-white/5 flex flex-col justify-between bg-black/20 backdrop-blur-md pt-20">
                         <div className="space-y-8">
                             <div className="flex items-center gap-3">
                                 <div className="p-2.5 bg-cyan-600 rounded-xl shadow-[0_0_15px_rgba(6,182,212,0.4)]">
@@ -342,6 +497,49 @@ export default function EnglishPractice() {
                     </motion.div>
                 </div>
             )}
+
+            {/* Confirmation Dialog */}
+            <AnimatePresence>
+                {showEndDialog && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-6"
+                    >
+                        <motion.div
+                            initial={{ scale: 0.9, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            exit={{ scale: 0.9, opacity: 0 }}
+                            className="bg-white/[0.03] border border-white/10 rounded-[3rem] p-8 max-w-md w-full backdrop-blur-3xl shadow-2xl"
+                        >
+                            <div className="flex items-center gap-4 mb-6">
+                                <div className="p-3 bg-red-500/20 rounded-full text-red-500">
+                                    <AlertTriangle size={24} />
+                                </div>
+                                <h3 className="text-2xl font-bold text-white">End Practice?</h3>
+                            </div>
+                            <p className="text-gray-300 mb-8 leading-relaxed">
+                                Are you sure you want to end the practice session? Your progress will be saved and you won't be able to continue.
+                            </p>
+                            <div className="flex gap-4">
+                                <button
+                                    onClick={cancelEndPractice}
+                                    className="flex-1 px-6 py-3 bg-gray-600/20 hover:bg-gray-600/30 border border-gray-500/30 text-gray-400 hover:text-gray-300 rounded-2xl font-bold transition-all"
+                                >
+                                    No, Continue
+                                </button>
+                                <button
+                                    onClick={confirmEndPractice}
+                                    className="flex-1 px-6 py-3 bg-red-600 hover:bg-red-500 text-white rounded-2xl font-bold transition-all"
+                                >
+                                    Yes, End Practice
+                                </button>
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
         </div>
     );
 }

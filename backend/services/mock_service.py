@@ -1,14 +1,23 @@
 from __future__ import annotations
 
+import logging
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
+logger = logging.getLogger(__name__)
+
 try:
-    from .. import models
-    from .llm_service import generate_quiz
-except ImportError:
-    import models  # type: ignore
-    from services.llm_service import generate_quiz  # type: ignore
+    import models
+    from services.llm_service import generate_quiz
+except ImportError as e:
+    logger.error(f"Import error in mock_service.py: {e}")
+    # Fallback imports for development
+    try:
+        import models
+        from services.llm_service import generate_quiz
+    except ImportError as fallback_error:
+        logger.error(f"Fallback import error in mock_service.py: {fallback_error}")
+        raise SystemExit(f"Failed to import required modules in mock_service.py: {fallback_error}")
 
 
 def get_current_mock(db: Session) -> "models.GlobalMock | None":

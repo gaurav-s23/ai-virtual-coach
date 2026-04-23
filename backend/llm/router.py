@@ -24,7 +24,7 @@ def default_fallback_models() -> list[str]:
     - Gemini Flash (reliability/cost)
     - Local Ollama (no external dependency)
     """
-    return ["gemini/gemini-2.5-flash", "gemini/gemini-2.5-pro"]
+    return ["gemini/gemini-2.5-flash", "gemini/gemini-2.5-pro","openrouter/meta-llama/llama-4-maverick:free","openrouter/deepseek/deepseek-chat-v3-0324:free","openrouter/mistralai/mistral-small-3.2-24b-instruct:free",]
 
 
 def get_fallback_models(env_var: str = "LLM_FALLBACK_MODELS") -> list[str]:

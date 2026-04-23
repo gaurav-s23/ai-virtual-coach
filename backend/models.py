@@ -3,12 +3,8 @@ from sqlalchemy.dialects.postgresql import JSONB  # PostgreSQL specific optimize
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from datetime import datetime
-try:
-    # When `backend` is used as a package (e.g. `python -m backend.main`)
-    from .database import Base
-except ImportError:
-    # When running from within the `backend/` directory (e.g. `uvicorn main:app`)
-    from database import Base
+# Use absolute imports for Docker compatibility
+from database import Base
 
 class User(Base):
     __tablename__ = "users"
@@ -97,6 +93,33 @@ class MockTest(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     candidate = relationship("User", back_populates="mocks")
 
+class MockSession(Base):
+    __tablename__ = "mock_sessions"
+    __table_args__ = (
+        Index("ix_mock_sessions_user_id_created_at", "user_id", "created_at"),
+        Index("ix_mock_sessions_session_id", "session_id"),
+    )
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    session_id = Column(String(64), nullable=True, unique=True)
+    
+    session_type = Column(String(32), default="mock_test", nullable=False)  # mock_test, practice, etc.
+    category = Column(String(50), index=True)
+    score = Column(Integer)
+    total_questions = Column(Integer, default=20)
+    correct_answers = Column(Integer, default=0)
+    
+    # JSON data for questions and answers
+    questions = Column(JSON().with_variant(JSONB, "postgresql"))
+    answers = Column(JSON().with_variant(JSONB, "postgresql"))
+    
+    status = Column(String(32), default="in_progress", nullable=False)  # in_progress, completed, abandoned
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    abandoned_at = Column(DateTime(timezone=True), nullable=True)
+
 
 class GlobalMock(Base):
     __tablename__ = "global_mocks"
@@ -138,10 +161,12 @@ class EnglishSession(Base):
     __tablename__ = "english_sessions"
     __table_args__ = (
         Index("ix_english_sessions_user_id_created_at", "user_id", "created_at"),
+        Index("ix_english_sessions_session_id", "session_id"),
     )
     
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    session_id = Column(String(64), nullable=True, unique=True)
     
     topic = Column(String(255))
     grammar_score = Column(Integer)
@@ -150,7 +175,14 @@ class EnglishSession(Base):
     rating = Column(String(10)) 
     critique = Column(Text)
     
+    # Session tracking fields
+    status = Column(String(32), default="in_progress", nullable=False)  # in_progress, completed, abandoned
+    interactions = Column(JSON().with_variant(JSONB, "postgresql"))  # Store conversation history
+    
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    abandoned_at = Column(DateTime(timezone=True), nullable=True)
+    
     candidate = relationship("User", back_populates="english_sessions")
 
 class Attendance(Base):

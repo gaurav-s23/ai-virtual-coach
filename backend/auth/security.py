@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import secrets
 from dataclasses import dataclass
@@ -13,12 +14,20 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
+logger = logging.getLogger(__name__)
+
 try:
-    from .. import models
-    from ..database import get_db
-except ImportError:
-    import models  # type: ignore
-    from database import get_db  # type: ignore
+    import models
+    from database import get_db
+except ImportError as e:
+    logger.error(f"Import error in auth/security.py: {e}")
+    # Fallback imports for development
+    try:
+        import models
+        from database import get_db
+    except ImportError as fallback_error:
+        logger.error(f"Fallback import error in auth/security.py: {fallback_error}")
+        raise SystemExit(f"Failed to import required modules in auth/security.py: {fallback_error}")
 
 
 # Argon2 is the primary scheme. Keep bcrypt enabled for verifying legacy hashes.

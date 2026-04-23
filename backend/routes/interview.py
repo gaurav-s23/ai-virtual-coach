@@ -7,43 +7,28 @@ import logging
 import tempfile
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
+from datetime import datetime
 
-try:
-    from .. import models
-    from ..database import get_db
-    from ..core.security import get_current_user
-    from ..core.rate_limit import enforce_rate_limit
-    from ..services.llm_service import generate_chat_feedback, generate_initial_interview, generate_pivot_deepdives
-    from ..services.answer_verifier import verify_answer_relevance
-    from ..services.scoring_service import score_answer_quality
-    from ..services.audio_features import extract_audio_features
-    from ..services.rag_service import extract_resume_brief, get_rag_status, queue_resume_embedding
-    from ..services.interview_service import (
-        append_transcript_turn,
-        build_welcome_message,
-        create_interview_session,
-        interview_payload,
-    )
-    from ..services.discussion_service import process_discussion_first_interview
-    from ..services.confidence_service import analyze_confidence
-    from .schemas import ChatRequest, ChatResponse, PivotRequest, PivotResponse, StartInterviewResponse
-except ImportError:
-    import models  # type: ignore
-    from database import get_db  # type: ignore
-    from core.security import get_current_user  # type: ignore
-    from core.rate_limit import enforce_rate_limit  # type: ignore
-    from services.llm_service import generate_chat_feedback, generate_initial_interview, generate_pivot_deepdives  # type: ignore
-    from services.answer_verifier import verify_answer_relevance  # type: ignore
-    from services.scoring_service import score_answer_quality  # type: ignore
-    from services.audio_features import extract_audio_features  # type: ignore
-    from services.rag_service import extract_resume_brief, get_rag_status, queue_resume_embedding  # type: ignore
-    from services.interview_service import (  # type: ignore
-        append_transcript_turn,
-        build_welcome_message,
-        create_interview_session,
-        interview_payload,
-    )
-    from routes.schemas import ChatRequest, ChatResponse, PivotRequest, PivotResponse, StartInterviewResponse  # type: ignore
+from models import User, Interview
+from database import get_db
+from core.security import get_current_user
+from core.rate_limit import enforce_rate_limit
+from services.llm_service import generate_chat_feedback, generate_initial_interview, generate_pivot_deepdives
+from services.answer_verifier import verify_answer_relevance
+from services.scoring_service import score_answer_quality
+from services.audio_features import extract_audio_features
+from services.rag_service import extract_resume_brief, get_rag_status, queue_resume_embedding
+from services.interview_service import (
+    append_transcript_turn,
+    build_welcome_message,
+    create_interview_session,
+    interview_payload,
+)
+from services.discussion_service import process_discussion_first_interview
+from services.confidence_service import analyze_confidence
+from services.llm_client import LLMClient
+from utils.sse import SSEEvent, StreamingResponse
+from routes.schemas import ChatRequest, ChatResponse, PivotRequest, PivotResponse, StartInterviewResponse
 
 router = APIRouter(prefix="/api", tags=["Interview"])
 _FILENAME_SAFE_RE = re.compile(r"[^a-zA-Z0-9._-]+")
@@ -63,7 +48,7 @@ async def start_interview(
     jd: str = Form(""),
     role: str = Form("Software Engineer"),
     db: Session = Depends(get_db),
-    current_user: "models.User" = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     content = await resume.read()
     if not content or len(content) < 50:
@@ -100,18 +85,18 @@ async def start_interview(
     )
 
 
-@router.post("/interview/chat", response_model=ChatResponse)
+@router.post("/interview/chat")
 async def interview_chat(
     data: ChatRequest,
-    current_user: "models.User" = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     enforce_rate_limit(key=f"chat:{current_user.id}", max_requests=40, window_seconds=60)
     session_id = data.session_id or "default"
     interview = (
-        db.query(models.Interview)
-        .filter(models.Interview.session_id == session_id)
-        .filter(models.Interview.user_id == current_user.id)
+        db.query(Interview)
+        .filter(Interview.session_id == session_id)
+        .filter(Interview.user_id == current_user.id)
         .first()
     )
     if not interview:
@@ -128,73 +113,94 @@ async def interview_chat(
         except Exception:
             discussion_state = None
 
-    # Use Discussion-First logic
-    ai_reply, updated_discussion_state = await process_discussion_first_interview(
-        question=data.question,
-        answer=data.answer,
-        context=data.context or interview.resume_context or "",
-        discussion_state=discussion_state
-    )
-
-    # Get traditional metrics for compatibility
-    relevance = verify_answer_relevance(data.question, data.answer)
-    quality_score = score_answer_quality(data.question, data.answer)
+    async def interview_chat_stream():
+        try:
+            # Use unified LLM client for streaming feedback
+            llm_client = LLMClient()
+            
+            # Build context for the interview feedback
+            context = data.context or ""
+            resume_brief = ""
+            try:
+                resume_brief = extract_resume_brief(current_user.id) or ""
+            except Exception:
+                resume_brief = ""
+            
+            # Create streaming prompt for interview feedback
+            feedback_prompt = f"""
+            You are an expert interviewer providing real-time feedback for a candidate's response.
+            
+            Question: {data.question}
+            Candidate's Answer: {data.answer}
+            Time Taken: {data.time_taken_seconds or 0} seconds
+            
+            Context: {context}
+            Resume Brief: {resume_brief}
+            
+            Discussion State: {discussion_state}
+            
+            Provide constructive, professional feedback that:
+            1. Evaluates the answer quality
+            2. Suggests improvements
+            3. Maintains encouraging tone
+            4. Is concise (2-3 sentences max)
+            
+            Return only the feedback text.
+            """
+            
+            confidence_score = 75  # Default confidence score
+            
+            async for chunk in llm_client.generate_stream(
+                prompt=feedback_prompt,
+                model_type="high_reasoning",  # Use high-reasoning model for interviews
+                temperature=0.3
+            ):
+                if chunk.type == "content":
+                    yield SSEEvent("content", {"chunk": chunk.content})
+                elif chunk.type == "complete":
+                    # Calculate confidence score based on answer quality
+                    try:
+                        confidence_score = await score_answer_quality(data.answer, data.question)
+                    except Exception:
+                        confidence_score = 75  # Default if scoring fails
+                    
+                    # Update transcript with streaming feedback
+                    try:
+                        await append_transcript_turn(
+                            db, session_id, current_user.id, data.question, data.answer, chunk.content
+                        )
+                    except Exception:
+                        logger.warning("Failed to append transcript turn")
+                    
+                    # Send complete event with feedback and confidence
+                    yield SSEEvent("complete", {
+                        "feedback": chunk.content,
+                        "confidence_score": confidence_score
+                    })
+                    break
+                elif chunk.type == "error":
+                    yield SSEEvent("error", {"error": chunk.content})
+                    break
+                    
+        except Exception as e:
+            logger.error("Error in interview chat streaming: %s", str(e))
+            yield SSEEvent("error", {"error": "Failed to process interview response"})
     
-    # Get real confidence analysis from PyTorch model
-    confidence_analysis = await analyze_confidence(data.answer)
+    return StreamingResponse(interview_chat_stream())
     
-    # Get readiness score from traditional method for compatibility
-    _, readiness_score = await generate_chat_feedback(
-        question=data.question,
-        answer=data.answer,
-        context=data.context or interview.resume_context or "",
-    )
-    
-    # Add off-topic warning if needed
-    if relevance["verdict"] == "off-topic":
-        ai_reply = "Note: Your answer seems off-topic. " + ai_reply
-    
-    # Add timing flag if needed
-    timing_flag = "suspiciously fast" if (data.time_taken_seconds is not None and data.time_taken_seconds < 4) else None
-    if timing_flag:
-        ai_reply = f"{ai_reply}\n\nNote: answer was submitted very quickly and may need deeper verification."
-
-    # Append transcript with discussion state
-    transcript_entry = {
-        "user_answer": data.answer,
-        "assistant_reply": ai_reply,
-        "question": data.question,
-        "discussion_state": updated_discussion_state
-    }
-    append_transcript_turn(db=db, interview=interview, **transcript_entry)
-    
-    logger.info("interview_chat user_id=%s session_id=%s question_idx=%s discussion_rounds=%s", 
-                current_user.id, session_id, interview.current_question, 
-                updated_discussion_state.get("discussion_rounds", 0))
-    
-    return {
-        "reply": ai_reply,
-        "readiness_score": readiness_score,
-        "state": interview.status,
-        "quality_score": quality_score,
-        "relevance": relevance,
-        "timing_flag": timing_flag,
-        "discussion_state": updated_discussion_state,  # Add discussion state to response
-        "confidence_score": confidence_analysis.get("confidence_score", readiness_score),  # Add real confidence score
-        "confidence_features": confidence_analysis.get("features", {})  # Add confidence features
-    }
-
+     
+                        
 
 @router.get("/interview/{session_id}/history")
 async def interview_history(
     session_id: str,
-    current_user: "models.User" = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     interview = (
-        db.query(models.Interview)
-        .filter(models.Interview.session_id == session_id)
-        .filter(models.Interview.user_id == current_user.id)
+        db.query(Interview)
+        .filter(Interview.session_id == session_id)
+        .filter(Interview.user_id == current_user.id)
         .first()
     )
     if not interview:
@@ -203,12 +209,12 @@ async def interview_history(
 
 
 @router.get("/interview/rag-status")
-async def interview_rag_status(current_user: "models.User" = Depends(get_current_user)):
+async def interview_rag_status(current_user: User = Depends(get_current_user)):
     return get_rag_status(current_user.id)
 
 
 @router.post("/interview/pivot", response_model=PivotResponse)
-async def interview_pivot(data: PivotRequest, _current_user: "models.User" = Depends(get_current_user)):
+async def interview_pivot(data: PivotRequest, _current_user: User = Depends(get_current_user)):
     enforce_rate_limit(key=f"pivot:{_current_user.id}", max_requests=10, window_seconds=60)
     result = await generate_pivot_deepdives(data.history, data.role, data.context)
     logger.info("interview_pivot user_id=%s role=%s", _current_user.id, data.role)
@@ -220,7 +226,7 @@ async def interview_pivot(data: PivotRequest, _current_user: "models.User" = Dep
 @router.post("/interview/analyze-audio")
 async def analyze_audio(
     audio: UploadFile = File(...),
-    current_user: "models.User" = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     suffix = os.path.splitext(audio.filename or "")[-1] or ".wav"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
@@ -230,3 +236,147 @@ async def analyze_audio(
         return extract_audio_features(file_path)
     finally:
         os.unlink(file_path)
+
+
+@router.post("/interview/end-session")
+async def end_interview_session(
+    session_data: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    try:
+        session_id = session_data.get("session_id")
+        interview = (
+            db.query(Interview)
+            .filter(Interview.session_id == session_id)
+            .filter(Interview.user_id == current_user.id)
+            .first()
+        )
+        
+        if not interview:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        # Update interview record
+        interview.status = "completed"
+        interview.overall_score = session_data.get("performance_log", {}).get("overall_score", 0)
+        interview.completed_at = datetime.utcnow()
+        
+        # Update user stats
+        current_user.total_interviews += 1
+        db.commit()
+        
+        logger.info("interview_session_completed user_id=%s session_id=%s score=%s", 
+                   current_user.id, session_id, interview.overall_score)
+        return {"status": "success", "message": "Interview session completed successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("interview_end_session_error user_id=%s error=%s", current_user.id, str(e))
+        raise HTTPException(status_code=500, detail="Failed to end interview session")
+
+
+@router.post("/interview/abandon-session")
+async def abandon_interview_session(
+    session_data: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    try:
+        session_id = session_data.get("session_id")
+        interview = (
+            db.query(Interview)
+            .filter(Interview.session_id == session_id)
+            .filter(Interview.user_id == current_user.id)
+            .first()
+        )
+        
+        if not interview:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        # Update interview record
+        interview.status = "abandoned"
+        interview.abandoned_at = datetime.utcnow()
+        db.commit()
+        
+        logger.info("interview_session_abandoned user_id=%s session_id=%s", current_user.id, session_id)
+        return {"status": "success", "message": "Interview session marked as abandoned"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("interview_abandon_session_error user_id=%s error=%s", current_user.id, str(e))
+        raise HTTPException(status_code=500, detail="Failed to abandon interview session")
+
+
+@router.get("/interview/stats/{user_id}")
+async def get_interview_stats(
+    user_id: int,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_user)
+):
+    try:
+        # Get all interviews for the user
+        interviews = db.query(Interview).filter(Interview.user_id == user_id).all()
+        
+        total_attempted = len(interviews)
+        total_completed = len([i for i in interviews if i.status == "completed"])
+        
+        if total_completed == 0:
+            return {
+                "total_attempted": total_attempted,
+                "avg_score": 0,
+                "weak_areas": [],
+                "fluency_score": 0
+            }
+        
+        # Calculate average score
+        avg_score = sum(i.overall_score for i in interviews if i.status == "completed" and i.overall_score) / total_completed
+        
+        # Extract weak areas from interview transcripts
+        weak_areas = []
+        fluency_scores = []
+        
+        for interview in interviews:
+            if interview.status == "completed" and interview.transcript:
+                # Analyze transcript for weak areas and fluency
+                for entry in interview.transcript:
+                    if isinstance(entry, dict) and "assistant_reply" in entry:
+                        reply = entry["assistant_reply"].lower()
+                        if "weak" in reply or "improve" in reply or "work on" in reply:
+                            # Extract weak areas from feedback
+                            if "communication" in reply:
+                                weak_areas.append("Communication")
+                            if "technical" in reply or "coding" in reply:
+                                weak_areas.append("Technical Skills")
+                            if "confidence" in reply:
+                                weak_areas.append("Confidence")
+                            if "fluency" in reply:
+                                weak_areas.append("Fluency")
+                        
+                        # Extract fluency scores if available
+                        if "fluency" in reply or "speaking" in reply:
+                            # Simple fluency estimation based on feedback
+                            if "good" in reply or "excellent" in reply:
+                                fluency_scores.append(80)
+                            elif "average" in reply or "okay" in reply:
+                                fluency_scores.append(60)
+                            else:
+                                fluency_scores.append(40)
+        
+        # Remove duplicates and get unique weak areas
+        weak_areas = list(set(weak_areas))
+        
+        # Calculate average fluency score
+        fluency_score = sum(fluency_scores) / len(fluency_scores) if fluency_scores else 70
+        
+        return {
+            "total_attempted": total_attempted,
+            "avg_score": round(avg_score, 2),
+            "weak_areas": weak_areas,
+            "fluency_score": round(fluency_score, 2)
+        }
+        
+    except Exception as e:
+        logger.error("interview_stats_error user_id=%s error=%s", user_id, str(e))
+        raise HTTPException(status_code=500, detail="Failed to get interview stats")

@@ -8,13 +8,19 @@ from dataclasses import dataclass
 import PyPDF2
 
 try:
-    from .. import models
-    from ..database import SessionLocal
-    from ..rag.store import upsert_resume
-except ImportError:
-    import models  # type: ignore
-    from database import SessionLocal  # type: ignore
-    from rag.store import upsert_resume  # type: ignore
+    import models
+    from database import SessionLocal
+    from rag.store import upsert_resume
+except ImportError as e:
+    logger.error(f"Import error in rag_service.py: {e}")
+    # Fallback imports for development
+    try:
+        import models
+        from database import SessionLocal
+        from rag.store import upsert_resume
+    except ImportError as fallback_error:
+        logger.error(f"Fallback import error in rag_service.py: {fallback_error}")
+        raise SystemExit(f"Failed to import required modules in rag_service.py: {fallback_error}")
 
 logger = logging.getLogger("ai_virtual_coach.services.rag")
 _QUEUE: asyncio.Queue["EmbeddingTask"] | None = None

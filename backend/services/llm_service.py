@@ -11,13 +11,24 @@ from datetime import datetime, timezone, timedelta
 
 from pydantic import BaseModel, Field, ValidationError, TypeAdapter
 
+logger = logging.getLogger(__name__)
+
 try:
-    from ..core.config import get_settings
-    from ..llm.router import complete_with_fallback, get_fallback_models
-    from ..database import SessionLocal
-    from .. import models
-except ImportError:
-    from core.config import get_settings  # type: ignore
+    from core.config import get_settings
+    from llm.router import complete_with_fallback, get_fallback_models
+    from database import SessionLocal
+    import models
+except ImportError as e:
+    logger.error(f"Import error in llm_service.py: {e}")
+    # Fallback imports for development
+    try:
+        from core.config import get_settings
+        from llm.router import complete_with_fallback, get_fallback_models
+        from database import SessionLocal
+        import models
+    except ImportError as fallback_error:
+        logger.error(f"Fallback import error in llm_service.py: {fallback_error}")
+        raise SystemExit(f"Failed to import required modules in llm_service.py: {fallback_error}")
     from llm.router import complete_with_fallback, get_fallback_models  # type: ignore
     from database import SessionLocal  # type: ignore
     import models  # type: ignore
