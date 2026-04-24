@@ -45,7 +45,7 @@ google-genai>=1.56.0
 langchain-google-genai>=2.0.0
 
 # Unified multi-provider LLM interface + LangChain integration
-litellm==1.83.4
+litellm==1.85.0
 langchain-litellm==0.6.4
 redis==6.4.0
 transformers>=4.35.0
@@ -56,4 +56,4 @@ ragas==0.1.7
 datasets>=2.18.0
 
 # MLflow Experiment Tracking
-mlflow==2.8.1
+mlflow==2.15.1
