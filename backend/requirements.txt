@@ -40,7 +40,7 @@ torch>=2.0.0
 torchvision>=0.15.0
 
 # Remote LLM integrations (not used for embeddings/RAG vectorization)
-google-genai>=1.56.0,<2.0.0
+google-genai>=1.60.0,<2.0.0
 langchain-google-genai>=2.0.0,<3.0.0
 
 # Unified multi-provider LLM interface + LangChain integration
@@ -48,13 +48,11 @@ litellm>=1.80.0,<2.0.0
 langchain-litellm>=0.6.4,<1.0.0
 redis>=6.4.0,<7.0.0
 transformers>=4.35.0,<5.0.0
-websockets>=11.0,<12.0.0
+websockets>=11.0,<13.0.0
 
 # RAGAS Evaluation Framework
-ragas>=0.1.7,<1.0.0
-datasets>=2.18.0,<3.0.0
 ragas==0.1.7
-datasets>=2.18.0
+datasets>=2.18.0,<3.0.0
 
 # MLflow Experiment Tracking
 mlflow==2.14.3
