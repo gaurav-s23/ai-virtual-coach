@@ -5,7 +5,7 @@ import hashlib
 import json
 import logging
 import time
-from typing import Any
+from typing import Any, Dict
 import os
 from datetime import datetime, timezone, timedelta
 
@@ -245,7 +245,9 @@ async def _llm_json_call(*, cache_key: str, prompt: str, schema: type[BaseModel]
         return cached
 
     # Cache miss - generate new response
-    for attempt in range(2):
+    attempts = max(1, settings.llm_retry_count + 1)
+    last_error = None
+    for attempt in range(attempts):
         try:
             response = await complete_with_fallback(
                 prompt=prompt,
@@ -259,12 +261,13 @@ async def _llm_json_call(*, cache_key: str, prompt: str, schema: type[BaseModel]
 
             # Cache in all layers: Redis, memory, and database
             await _cache_set_async(cache_key, parsed)
-            _cache_set(cache_key, parsed)
             _db_cache_set(cache_key, parsed)
 
             return parsed
-        if attempt < attempts - 1:
-            await asyncio.sleep(0.6 * (attempt + 1))
+        except Exception as e:
+            last_error = e
+            if attempt < attempts - 1:
+                await asyncio.sleep(0.6 * (attempt + 1))
 
     if last_error:
         logger.warning("llm_json_fallback cache_key=%s error=%s", cache_key, str(last_error))
