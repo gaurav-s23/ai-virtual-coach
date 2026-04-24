@@ -57,4 +57,3 @@ datasets>=2.18.0
 
 # MLflow Experiment Tracking
 mlflow==2.8.1
-mlflow-skinny==2.8.1  # Lightweight MLflow without heavy dependencies
