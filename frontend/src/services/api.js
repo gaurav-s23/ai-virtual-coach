@@ -62,12 +62,74 @@ longRunningApi.interceptors.response.use(
         const status = error?.response?.status;
         config.__retryCount = config.__retryCount || 0;
         
-        // Retry on server errors and rate limiting
-        if ((status === 503 || status === 429 || status === 401 || status === 403) && config.__retryCount < 2) {
+        // Retry on network errors and server errors (not auth errors)
+        const shouldRetry = (
+            // Network errors (no response)
+            !error.response ||
+            // Server errors
+            status === 503 || // Service Unavailable
+            status === 502 || // Bad Gateway
+            status === 500 || // Internal Server Error
+            status === 504    // Gateway Timeout
+        ) && config.__retryCount < 3;
+        
+        if (shouldRetry) {
             config.__retryCount += 1;
-            const delay = (status === 429) ? 2000 : 800; // Longer delay for rate limiting
-            await new Promise((resolve) => setTimeout(resolve, delay * config.__retryCount));
+            // Exponential backoff with jitter
+            const baseDelay = 1000;
+            const maxDelay = 10000;
+            const exponentialDelay = Math.min(baseDelay * Math.pow(2, config.__retryCount - 1), maxDelay);
+            const jitter = Math.random() * 0.3 * exponentialDelay;
+            const delay = exponentialDelay + jitter;
+            
+            console.warn(`Retrying long-running request (attempt ${config.__retryCount}/3) after ${Math.round(delay)}ms delay`);
+            await new Promise((resolve) => setTimeout(resolve, delay));
             return longRunningApi(config);
+        }
+        return Promise.reject(error);
+    }
+);
+
+// Add request and response interceptors to mediumApi
+mediumApi.interceptors.request.use(async (config) => {
+    const token = localStorage.getItem("token");
+    if (token) {
+        config.headers = config.headers || {};
+        config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+});
+
+mediumApi.interceptors.response.use(
+    (response) => response,
+    async (error) => {
+        const config = error.config || {};
+        const status = error?.response?.status;
+        config.__retryCount = config.__retryCount || 0;
+        
+        // Retry on network errors and server errors (not auth errors)
+        const shouldRetry = (
+            // Network errors (no response)
+            !error.response ||
+            // Server errors
+            status === 503 || // Service Unavailable
+            status === 502 || // Bad Gateway
+            status === 500 || // Internal Server Error
+            status === 504    // Gateway Timeout
+        ) && config.__retryCount < 3;
+        
+        if (shouldRetry) {
+            config.__retryCount += 1;
+            // Exponential backoff with jitter
+            const baseDelay = 1000;
+            const maxDelay = 10000;
+            const exponentialDelay = Math.min(baseDelay * Math.pow(2, config.__retryCount - 1), maxDelay);
+            const jitter = Math.random() * 0.3 * exponentialDelay;
+            const delay = exponentialDelay + jitter;
+            
+            console.warn(`Retrying medium request (attempt ${config.__retryCount}/3) after ${Math.round(delay)}ms delay`);
+            await new Promise((resolve) => setTimeout(resolve, delay));
+            return mediumApi(config);
         }
         return Promise.reject(error);
     }
@@ -90,12 +152,28 @@ api.interceptors.response.use(
         const status = error?.response?.status;
         config.__retryCount = config.__retryCount || 0;
         
-        // Retry on server errors and some auth errors (might be transient)
-        if ((status === 503 || status === 401 || status === 403) && config.__retryCount < 2) {
+        // Retry on network errors and server errors (not auth errors)
+        const shouldRetry = (
+            // Network errors (no response)
+            !error.response ||
+            // Server errors
+            status === 503 || // Service Unavailable
+            status === 502 || // Bad Gateway
+            status === 500 || // Internal Server Error
+            status === 504    // Gateway Timeout
+        ) && config.__retryCount < 3;
+        
+        if (shouldRetry) {
             config.__retryCount += 1;
-            // For auth errors, wait a bit longer before retry
-            const delay = (status === 401 || status === 403) ? 800 : 400;
-            await new Promise((resolve) => setTimeout(resolve, delay * config.__retryCount));
+            // Exponential backoff with jitter
+            const baseDelay = 1000;
+            const maxDelay = 10000;
+            const exponentialDelay = Math.min(baseDelay * Math.pow(2, config.__retryCount - 1), maxDelay);
+            const jitter = Math.random() * 0.3 * exponentialDelay;
+            const delay = exponentialDelay + jitter;
+            
+            console.warn(`Retrying request (attempt ${config.__retryCount}/3) after ${Math.round(delay)}ms delay`);
+            await new Promise((resolve) => setTimeout(resolve, delay));
             return api(config);
         }
         return Promise.reject(error);
@@ -104,11 +182,16 @@ api.interceptors.response.use(
 
 // Login Function
 export const loginUser = async (credentials) => {
-    const response = await api.post('/api/login', credentials);
-    const tok = response.data.access_token || response.data.token;
-    if (tok) localStorage.setItem('token', tok);
-    if (response.data.user) localStorage.setItem('user', JSON.stringify(response.data.user));
-    return response.data;
+    try {
+        const response = await api.post('/api/login', credentials);
+        const tok = response.data.access_token || response.data.token;
+        if (tok) localStorage.setItem('token', tok);
+        if (response.data.user) localStorage.setItem('user', JSON.stringify(response.data.user));
+        return response.data;
+    } catch (error) {
+        const errorMessage = error.response?.data?.detail || error.message || 'Login failed. Please try again.';
+        throw new Error(errorMessage);
+    }
 };
 
 // Dashboard Data Fetch

@@ -14,13 +14,21 @@ import AdminPanel from './pages/AdminPanel';
 import api from './services/api';
 
 const ProtectedRoute = ({ children }) => {
-    const token = localStorage.getItem('token');
+    const [token, setToken] = useState(null);
     const [isValidating, setIsValidating] = useState(true);
     const [isAuthenticated, setIsAuthenticated] = useState(false);
 
+    // Synchronous check for immediate token presence
+    const currentToken = localStorage.getItem('token');
+    if (!currentToken) {
+        localStorage.removeItem('user');
+        return <Navigate to="/auth" replace />;
+    }
+
     useEffect(() => {
         const validateToken = async () => {
-            if (!token) {
+            const currentToken = localStorage.getItem('token');
+            if (!currentToken) {
                 setIsValidating(false);
                 setIsAuthenticated(false);
                 return;
@@ -28,7 +36,7 @@ const ProtectedRoute = ({ children }) => {
 
             try {
                 // Use server-side token verification
-                const response = await api.post('/auth/verify-token', { token });
+                const response = await api.post('/auth/verify-token', { token: currentToken });
                 
                 if (response.data.valid) {
                     // Update user info in localStorage if needed
@@ -49,12 +57,54 @@ const ProtectedRoute = ({ children }) => {
                 localStorage.removeItem('token');
                 localStorage.removeItem('user');
                 setIsAuthenticated(false);
+                // Show user-friendly error message
+                alert('Session validation failed. Please try logging in again.');
             } finally {
                 setIsValidating(false);
             }
         };
 
         validateToken();
+    }, []);
+
+    useEffect(() => {
+        const refreshToken = async () => {
+            const currentToken = localStorage.getItem('token');
+            if (!currentToken) {
+                setIsValidating(false);
+                setIsAuthenticated(false);
+                return;
+            }
+
+            try {
+                // Use server-side token refresh
+                const response = await api.post('/auth/refresh-token', { token: currentToken });
+                
+                if (response.data.valid) {
+                    // Update token in localStorage if needed
+                    const newToken = response.data.token;
+                    localStorage.setItem('token', newToken);
+                    setToken(newToken);
+                } else {
+                    // Token is invalid, clear storage
+                    localStorage.removeItem('token');
+                    localStorage.removeItem('user');
+                    setIsAuthenticated(false);
+                }
+            } catch (error) {
+                console.error('Server-side token refresh failed:', error);
+                // Clear storage on any validation error
+                localStorage.removeItem('token');
+                localStorage.removeItem('user');
+                setIsAuthenticated(false);
+                // Show user-friendly error message
+                alert('Session validation failed. Please try logging in again.');
+            }
+        };
+
+        const intervalId = setInterval(refreshToken, 1000 * 60 * 5); // Refresh token every 5 minutes
+
+        return () => clearInterval(intervalId);
     }, [token]);
 
     // Show loading state during validation
@@ -83,40 +133,64 @@ const ProtectedRoute = ({ children }) => {
 };
 
 const AdminProtectedRoute = ({ children }) => {
-    const adminToken = localStorage.getItem('admin_token');
-    
-    if (!adminToken) {
-        return <Navigate to="/admin/login" />;
+    const [isValidating, setIsValidating] = useState(true);
+    const [isAuthenticated, setIsAuthenticated] = useState(false);
+
+    useEffect(() => {
+        const validateAdminToken = async () => {
+            const adminToken = localStorage.getItem('admin_token');
+            
+            if (!adminToken) {
+                setIsValidating(false);
+                setIsAuthenticated(false);
+                return;
+            }
+
+            try {
+                // Server-side admin token validation
+                const response = await api.post('/api/admin/verify-token', { token: adminToken });
+                
+                if (response.data.valid && response.data.role === 'admin') {
+                    setIsAuthenticated(true);
+                } else {
+                    localStorage.removeItem('admin_token');
+                    setIsAuthenticated(false);
+                }
+            } catch (error) {
+                console.error('Admin token validation failed:', error);
+                localStorage.removeItem('admin_token');
+                setIsAuthenticated(false);
+            } finally {
+                setIsValidating(false);
+            }
+        };
+
+        validateAdminToken();
+    }, []);
+
+    // Show loading state during validation
+    if (isValidating) {
+        return (
+            <div style={{ 
+                display: 'flex', 
+                justifyContent: 'center', 
+                alignItems: 'center', 
+                height: '100vh',
+                fontSize: '18px',
+                color: '#666'
+            }}>
+                Validating admin session...
+            </div>
+        );
     }
-    
-    // Basic admin token validation
-    try {
-        const parts = adminToken.split('.');
-        if (parts.length !== 3) {
-            localStorage.removeItem('admin_token');
-            return <Navigate to="/admin/login" />;
-        }
-        
-        // Check if token is expired
-        const payload = JSON.parse(atob(parts[1]));
-        const currentTime = Date.now() / 1000;
-        if (payload.exp && payload.exp < currentTime) {
-            localStorage.removeItem('admin_token');
-            return <Navigate to="/admin/login" />;
-        }
-        
-        // Check if role is admin
-        if (payload.role !== 'admin') {
-            localStorage.removeItem('admin_token');
-            return <Navigate to="/admin/login" />;
-        }
-        
-        return children;
-    } catch (error) {
-        console.error('Admin token validation failed:', error);
-        localStorage.removeItem('admin_token');
-        return <Navigate to="/admin/login" />;
+
+    // Redirect to admin login if not authenticated
+    if (!isAuthenticated) {
+        return <Navigate to="/admin/login" replace />;
     }
+
+    // Render children if authenticated
+    return children;
 };
 
 function App() {

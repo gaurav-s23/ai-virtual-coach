@@ -43,7 +43,7 @@ def _user_stats_payload(user: User) -> dict:
 async def get_stats(user_id: int, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
-        raise HTTPException(status_code=404, detail="Invalid input")
+        raise HTTPException(status_code=404, detail="User not found")
     return _user_stats_payload(user)
 
 
@@ -55,7 +55,7 @@ async def get_dashboard(
 ):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
-        raise HTTPException(status_code=404, detail="Invalid input")
+        raise HTTPException(status_code=404, detail="User not found")
 
     base = _user_stats_payload(user)
     readiness = base["readiness"]
@@ -85,7 +85,7 @@ async def update_stats(
     current_user: "User" = Depends(get_current_user),
 ):
     if current_user.id != user_id:
-        raise HTTPException(status_code=403, detail="Invalid input")
+        raise HTTPException(status_code=403, detail="Access denied: cannot access other user's data")
     user = db.query(User).filter(User.id == user_id).first()
     if user:
         if data.type == "interview":

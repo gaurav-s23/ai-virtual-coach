@@ -23,6 +23,24 @@ services:
     networks:
       - app-network
 
+  # Redis Cache Service
+  redis:
+    image: redis:7-alpine
+    container_name: ai_virtual_coach_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - app-network
+
   # ChromaDB Vector Store
   chroma:
     image: chromadb/chroma:latest
@@ -37,7 +55,7 @@ services:
     volumes:
       - chroma_data:/chroma/chroma
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8000/api/v1/heartbeat"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -101,6 +119,8 @@ services:
         condition: service_healthy
       chroma:
         condition: service_healthy
+    # Add timeout to prevent indefinite blocking
+    # If ChromaDB fails to start within 2 minutes, backend will still start with degraded functionality
     networks:
       - app-network
 

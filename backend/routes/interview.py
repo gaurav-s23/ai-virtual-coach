@@ -52,11 +52,53 @@ async def start_interview(
 ):
     # Rate limiting for interview creation (resource-intensive)
     enforce_rate_limit(key=f"start_interview:{current_user.id}", max_requests=3, window_seconds=300)  # 3 interviews per 5 minutes
+    
+    # Validate form fields with comprehensive checks
+    if not name or len(name.strip()) < 2:
+        raise HTTPException(status_code=400, detail="Name must be at least 2 characters long")
+    if len(name) > 100:
+        raise HTTPException(status_code=400, detail="Name is too long (max 100 characters)")
+    
+    # Check for potentially malicious content in name
+    if any(char in name for char in ['<', '>', '&', '"', "'", '/', '\\', '|', '?', '*']):
+        raise HTTPException(status_code=400, detail="Name contains invalid characters")
+    
+    # Validate role field
+    valid_roles = ["Software Engineer", "Data Scientist", "Product Manager", "Designer", "DevOps Engineer", "QA Engineer", "Backend Developer", "Frontend Developer", "Full Stack Developer"]
+    if not role or role.strip() == "":
+        raise HTTPException(status_code=400, detail="Role is required")
+    if len(role) > 50:
+        raise HTTPException(status_code=400, detail="Role is too long (max 50 characters)")
+    if role not in valid_roles:
+        raise HTTPException(status_code=400, detail=f"Invalid role. Must be one of: {', '.join(valid_roles)}")
+    
+    # Validate job description field
+    if jd and len(jd) > 10000:  # 10KB limit for job description
+        raise HTTPException(status_code=400, detail="Job description is too long (max 10000 characters)")
+    
+    # Check for potentially malicious content in job description
+    if jd and any(char in jd for char in ['<script', 'javascript:', 'vbscript:', 'onload=', 'onerror=']):
+        raise HTTPException(status_code=400, detail="Job description contains potentially malicious content")
+    
     content = await resume.read()
     if not content or len(content) < 50:
-        raise HTTPException(status_code=400, detail="Invalid input")
+        raise HTTPException(status_code=400, detail="Resume file is too small or empty")
     if len(content) > 8 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="Invalid input")
+        raise HTTPException(status_code=413, detail="Resume file is too large (max 8MB)")
+    
+    # Validate file type - only accept PDF files
+    if resume.filename and not resume.filename.lower().endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+    
+    # Additional validation using magic bytes for file type detection
+    import magic
+    try:
+        file_type = magic.from_buffer(content)
+        if not file_type or 'pdf' not in file_type.lower():
+            raise HTTPException(status_code=400, detail="Invalid file type")
+    except Exception:
+        # Fallback to filename check if magic detection fails
+        pass
 
     safe_filename = sanitize_filename(resume.filename or "resume.pdf")
     logger.info("interview_start user_id=%s role=%s filename=%s", current_user.id, role, safe_filename)
@@ -94,7 +136,9 @@ async def interview_chat(
     db: Session = Depends(get_db),
 ):
     enforce_rate_limit(key=f"chat:{current_user.id}", max_requests=40, window_seconds=60)
-    session_id = data.session_id or "default"
+    if not data.session_id:
+        raise HTTPException(status_code=400, detail="Session ID is required")
+    session_id = data.session_id
     interview = (
         db.query(Interview)
         .filter(Interview.session_id == session_id)
@@ -150,7 +194,14 @@ async def interview_chat(
             Return only the feedback text.
             """
             
-            confidence_score = 75  # Default confidence score
+            # Calculate dynamic confidence score based on answer quality
+            answer_length = len(data.answer or "")
+            keyword_quality = 0
+            quality_keywords = ["excellent", "good", "clear", "detailed", "specific"]
+            for keyword in quality_keywords:
+                if keyword in (data.answer or "").lower():
+                    keyword_quality += 10
+            confidence_score = min(95, max(50, 50 + (answer_length // 20) + keyword_quality))
             
             async for chunk in llm_client.generate_stream(
                 prompt=feedback_prompt,
@@ -171,8 +222,11 @@ async def interview_chat(
                         await append_transcript_turn(
                             db, session_id, current_user.id, data.question, data.answer, chunk.content
                         )
-                    except Exception:
-                        logger.warning("Failed to append transcript turn")
+                    except (KeyError, IndexError, ValueError) as e:
+                        logger.warning(f"Failed to append transcript turn: {e}")
+                    except Exception as e:
+                        logger.error(f"Unexpected error in transcript update: {e}")
+                        raise HTTPException(status_code=500, detail="Failed to update transcript")
                     
                     # Send complete event with feedback and confidence
                     yield SSEEvent("complete", {

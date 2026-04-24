@@ -26,9 +26,8 @@ except ImportError as e:
         import models
         from database import get_db
     except ImportError as fallback_error:
-        logger.error(f"Fallback import error in auth/security.py: {fallback_error}")
+        logger.error(f"Fallback import error: {fallback_error}")
         raise SystemExit(f"Failed to import required modules in auth/security.py: {fallback_error}")
-
 
 # Argon2 is the primary scheme. Keep bcrypt enabled for verifying legacy hashes.
 pwd_context = CryptContext(schemes=["argon2", "bcrypt"], deprecated="auto")
@@ -44,7 +43,13 @@ def get_rate_limit_key(request: Request) -> str:
     otherwise falls back to "anon".
     """
     user_id = request.state.user_id if hasattr(request.state, "user_id") else "anon"
-    ip = request.client.host if request.client else "unknown"
+    import ipaddress
+    try:
+        ip = str(ipaddress.ip_address(request.client.host)) if request.client else "unknown"
+    except ValueError:
+        ip = "invalid"
+    except Exception:
+        ip = "error"
     return f"{user_id}:{ip}"
 
 

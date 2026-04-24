@@ -1,5 +1,5 @@
 import logging
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from typing import Optional
 import json, os
@@ -9,12 +9,14 @@ logger = logging.getLogger(__name__)
 try:
     import models
     from core.security import get_current_user
+    from core.rate_limit import enforce_rate_limit
 except ImportError as e:
     logger.error(f"Import error in proctor.py: {e}")
     # Fallback imports for development
     try:
         import models
         from core.security import get_current_user
+        from core.rate_limit import enforce_rate_limit
     except ImportError as fallback_error:
         logger.error(f"Fallback import error in proctor.py: {fallback_error}")
         raise SystemExit(f"Failed to import required modules in proctor.py: {fallback_error}")
@@ -28,10 +30,28 @@ class ProctorEvent(BaseModel):
     metadata: Optional[dict] = None
 
 @router.post("/api/proctor/log")
-async def log_proctor_event(event: ProctorEvent, current_user: "models.User" = Depends(get_current_user)):
-    log_dir = "backend/data/proctor_logs"
-    os.makedirs(log_dir, exist_ok=True)
-    path = f"{log_dir}/{event.session_id}.json"
+async def log_proctor_event(
+    event: ProctorEvent, 
+    current_user: "models.User" = Depends(get_current_user),
+    request: Request = None
+):
+    # Rate limiting: 50 events per minute per user
+    enforce_rate_limit(
+        key=f"proctor_log:{current_user.id}",
+        max_requests=50,
+        window_seconds=60
+    )
+    
+    # Use secure, configurable location for proctor logs
+    log_dir = os.getenv("PROCTOR_LOG_DIR", "/tmp/proctor_logs")
+    os.makedirs(log_dir, exist_ok=True, mode=0o700)  # Restrictive permissions
+    
+    # Sanitize session_id to prevent path traversal
+    safe_session_id = "".join(c for c in event.session_id if c.isalnum() or c in "-_")
+    if not safe_session_id:
+        raise HTTPException(status_code=400, detail="Invalid session ID")
+    
+    path = os.path.join(log_dir, f"{safe_session_id}.json")
     logs = []
     if os.path.exists(path):
         try:
@@ -50,7 +70,15 @@ async def log_proctor_event(event: ProctorEvent, current_user: "models.User" = D
 
 @router.get("/api/proctor/report/{session_id}")
 async def get_proctor_report(session_id: str, current_user: "models.User" = Depends(get_current_user)):
-    path = f"backend/data/proctor_logs/{session_id}.json"
+    # Use secure, configurable location for proctor logs
+    log_dir = os.getenv("PROCTOR_LOG_DIR", "/tmp/proctor_logs")
+    
+    # Sanitize session_id to prevent path traversal
+    safe_session_id = "".join(c for c in session_id if c.isalnum() or c in "-_")
+    if not safe_session_id:
+        raise HTTPException(status_code=400, detail="Invalid session ID")
+    
+    path = os.path.join(log_dir, f"{safe_session_id}.json")
     if not os.path.exists(path):
         return {"session_id": session_id, "events": [], "summary": {}}
     with open(path, "r") as f:

@@ -40,7 +40,7 @@ async def admin_login(data: AdminLoginRequest):
     if not settings.admin_email or not settings.admin_password:
         raise HTTPException(status_code=500, detail="Server error, try again")
     if (data.email or "").strip().lower() != settings.admin_email or data.password != settings.admin_password:
-        raise HTTPException(status_code=403, detail="Invalid input")
+        raise HTTPException(status_code=403, detail="Invalid admin credentials")
 
     now = datetime.now(timezone.utc)
     token = jwt.encode(
@@ -57,6 +57,25 @@ async def admin_login(data: AdminLoginRequest):
     return {"admin_token": token}
 
 
+@router.post("/api/admin/verify-token")
+async def verify_admin_token(request: dict):
+    """Verify admin token server-side for secure validation"""
+    token = request.get("token")
+    if not token:
+        return {"valid": False, "role": None}
+    
+    try:
+        payload = jwt.decode(token, _jwt_secret(), algorithms=["HS256"])
+        if payload.get("type") != "access" or payload.get("role") != "admin":
+            return {"valid": False, "role": None}
+        
+        # Check if token is expired
+        if payload.get("exp") and payload["exp"] < datetime.now(timezone.utc).timestamp():
+            return {"valid": False, "role": None}
+        
+        return {"valid": True, "role": "admin"}
+    except (JWTError, ValueError, KeyError):
+        return {"valid": False, "role": None}
 
 
 @router.get("/api/admin/stats")
@@ -136,7 +155,7 @@ async def admin_users(
 async def admin_user_detail(user_id: int, db: Session = Depends(get_db), _: dict = Depends(get_admin_user)):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
-        raise HTTPException(status_code=404, detail="Invalid input")
+        raise HTTPException(status_code=404, detail="User not found")
     interviews = db.query(Interview).filter(Interview.user_id == user_id).all()
     mocks = db.query(MockTest).filter(MockTest.user_id == user_id).all()
     english = db.query(EnglishSession).filter(EnglishSession.user_id == user_id).all()

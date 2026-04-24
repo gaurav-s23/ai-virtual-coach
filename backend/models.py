@@ -63,7 +63,7 @@ class Interview(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     session_id = Column(String(64), nullable=True, unique=True)
     
-    role = Column(String(100), index=True)
+    role = Column(String(100), index=True, nullable=False)
     candidate_name = Column(String(120), nullable=True)
     status = Column(String(32), default="starting", nullable=False)
     current_question = Column(Integer, default=0, nullable=False)
@@ -195,4 +195,4 @@ class Attendance(Base):
     )
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    date = Column(DateTime(timezone=True), server_default=func.now())
+    date = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

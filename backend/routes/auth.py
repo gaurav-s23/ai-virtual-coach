@@ -43,33 +43,17 @@ except ImportError as e:
 router = APIRouter(prefix="/api", tags=["Auth"])
 
 
-@router.post("/login", response_model=LoginLegacyResponse)
-async def login(data: LoginRequest, db: Session = Depends(get_db)):
-    email = (data.email or "").strip().lower()
-    validate_password_length(data.password)
-    user = db.query(User).filter(User.email == email).first()
-    if not user or not verify_password(data.password, user.password):
-        raise HTTPException(status_code=400, detail="Invalid input")
-    tokens = issue_token_pair(db=db, user=user)
-    return {
-        "user": {"id": user.id, "email": user.email, "name": user.name},
-        "token": tokens.access_token,
-        "access_token": tokens.access_token,
-        "refresh_token": tokens.refresh_token,
-        "token_type": tokens.token_type,
-        "expires_in": tokens.expires_in,
-    }
 
 
 @router.post("/auth/signup", status_code=status.HTTP_201_CREATED, response_model=MeResponse)
 async def auth_signup(data: SignupRequest, db: Session = Depends(get_db)):
     email = (data.email or "").strip().lower()
     if not email or "@" not in email:
-        raise HTTPException(status_code=422, detail="Invalid input")
+        raise HTTPException(status_code=422, detail="Invalid email format")
     validate_password_length(data.password)
     existing = db.query(models.User).filter(models.User.email == email).first()
     if existing:
-        raise HTTPException(status_code=409, detail="Invalid input")
+        raise HTTPException(status_code=409, detail="Email already registered")
     user = models.User(
         email=email,
         password=hash_password(data.password),
@@ -79,9 +63,14 @@ async def auth_signup(data: SignupRequest, db: Session = Depends(get_db)):
         total_mocks=0,
         streak_count=1,
     )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
+    try:
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+    except Exception as e:
+        db.rollback()
+        logger.error(f"User creation failed: {e}")
+        raise HTTPException(status_code=500, detail="User registration failed")
     return {"id": user.id, "email": user.email, "name": user.name}
 
 
@@ -91,7 +80,7 @@ async def auth_login(data: LoginRequest, db: Session = Depends(get_db)):
     validate_password_length(data.password)
     user = db.query(User).filter(User.email == email).first()
     if not user or not verify_password(data.password, user.password):
-        raise HTTPException(status_code=400, detail="Invalid input")
+        raise HTTPException(status_code=400, detail="Invalid email or password")
     tokens = issue_token_pair(db=db, user=user)
     return {
         "user": {"id": user.id, "email": user.email, "name": user.name},
@@ -108,10 +97,15 @@ async def auth_refresh(data: RefreshRequest, db: Session = Depends(get_db)):
     token_hash = hash_refresh_token(data.refresh_token)
     row = db.query(models.RefreshToken).filter(models.RefreshToken.token_hash == token_hash).first()
     if not row:
-        raise HTTPException(status_code=401, detail="Invalid input")
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+    
+    # Check if refresh token is expired
+    if row.expires_at and row.expires_at < datetime.now(timezone.utc):
+        raise HTTPException(status_code=401, detail="Refresh token expired")
+    
     user = db.query(models.User).filter(models.User.id == row.user_id).first()
     if not user:
-        raise HTTPException(status_code=401, detail="Invalid input")
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
     tokens = rotate_refresh_token(db=db, user=user, refresh_token=data.refresh_token)
     return tokens.__dict__
 
@@ -123,7 +117,7 @@ async def auth_me(current_user: "models.User" = Depends(get_current_user)):
 
 @router.post("/auth/verify-token")
 async def verify_token(
-    token: str,
+    request: dict,
     db: Session = Depends(get_db)
 ):
     """
@@ -133,6 +127,45 @@ async def verify_token(
     try:
         from jose import JWTError, jwt
         from auth.security import _jwt_secret
+        
+        # Extract and validate token input
+        if not request or "token" not in request:
+            raise HTTPException(status_code=400, detail="Token is required")
+        
+        token = request["token"]
+        if not token or not isinstance(token, str):
+            raise HTTPException(status_code=400, detail="Invalid token format")
+        
+        # Validate token length and format
+        if len(token) < 10 or len(token) > 1000:
+            raise HTTPException(status_code=400, detail="Invalid token length")
+        
+        # Check for potentially malicious content
+        if any(char in token for char in ['<', '>', '&', '"', "'", '\n', '\r', '\t']):
+            raise HTTPException(status_code=400, detail="Token contains invalid characters")
+        
+        # Ensure token is properly encoded (should be base64-like)
+        try:
+            # Basic format validation for JWT (3 parts separated by dots)
+            parts = token.split('.')
+            if len(parts) != 3:
+                raise HTTPException(status_code=400, detail="Invalid token format")
+            
+            # Validate each part is base64-like (no invalid characters)
+            import base64
+            import binascii
+            for part in parts:
+                try:
+                    # Add padding if needed for base64 validation
+                    padded_part = part + '=' * (4 - len(part) % 4)
+                    base64.urlsafe_b64decode(padded_part)
+                except (binascii.Error, ValueError):
+                    # This is expected for JWT parts (they may not be valid base64 due to no padding)
+                    # So we just check for obviously invalid characters
+                    if any(char in part for char in [' ', '\n', '\r', '\t']):
+                        raise HTTPException(status_code=400, detail="Token contains invalid characters")
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid token encoding")
         
         # Decode and validate the token
         payload = jwt.decode(token, _jwt_secret(), algorithms=["HS256"])

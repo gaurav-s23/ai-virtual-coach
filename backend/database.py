@@ -14,12 +14,14 @@ SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL") or "sqlite+pysqlite:///./app
 
 logger = logging.getLogger(__name__)
 
-# Database configuration constants
-DEFAULT_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "10"))
-DEFAULT_MAX_OVERFLOW = int(os.getenv("DB_MAX_OVERFLOW", "20"))
+# Database configuration constants with dynamic sizing
+WORKER_COUNT = int(os.getenv("RAG_WORKER_COUNT", "1"))
+DEFAULT_POOL_SIZE = max(5, int(os.getenv("DB_POOL_SIZE", str(5 + WORKER_COUNT * 2))))  # Dynamic based on workers
+DEFAULT_MAX_OVERFLOW = max(10, int(os.getenv("DB_MAX_OVERFLOW", str(10 + WORKER_COUNT))))  # Dynamic based on workers
 DEFAULT_POOL_TIMEOUT = int(os.getenv("DB_POOL_TIMEOUT", "30"))
-DEFAULT_POOL_RECYCLE = int(os.getenv("DB_POOL_RECYCLE", "3600"))  # 1 hour
+DEFAULT_POOL_RECYCLE = int(os.getenv("DB_POOL_RECYCLE", "1800"))  # 30 minutes instead of 1 hour
 DEFAULT_CONNECT_TIMEOUT = int(os.getenv("DB_CONNECT_TIMEOUT", "10"))
+MAX_IDLE_CONNECTIONS = int(os.getenv("DB_MAX_IDLE", str(DEFAULT_POOL_SIZE // 2)))
 
 def get_database_config() -> dict:
     """Get database configuration based on environment and database type."""
@@ -94,26 +96,32 @@ def add_database_event_listeners(engine):
 try:
     db_config = get_database_config()
     engine = create_engine(SQLALCHEMY_DATABASE_URL, **db_config)
-    
-    # Add event listeners for monitoring
-    add_database_event_listeners(engine)
-    
-    # Log database connection info
-    if SQLALCHEMY_DATABASE_URL.startswith("postgresql"):
-        # Extract safe connection info for logging
-        safe_url = SQLALCHEMY_DATABASE_URL
-        if "@" in safe_url:
-            # Hide credentials in logs
-            parts = safe_url.split("@")
-            safe_url = f"***@{parts[1]}"
-        logger.info(f"Connected to PostgreSQL database: {safe_url}")
-        logger.info(f"Pool configuration: size={DEFAULT_POOL_SIZE}, max_overflow={DEFAULT_MAX_OVERFLOW}")
-    else:
-        logger.info(f"Connected to database: {SQLALCHEMY_DATABASE_URL.split('://')[0]}://***")
-        
-except SQLAlchemyError as e:
+except Exception as e:
     logger.critical(f"Failed to create database engine: {e}")
-    raise
+    # Fallback to SQLite for development
+    try:
+        fallback_url = "sqlite+pysqlite:///./app.db"
+        logger.warning(f"Falling back to SQLite: {fallback_url}")
+        engine = create_engine(fallback_url, **get_database_config())
+    except Exception as fallback_error:
+        logger.critical(f"Failed to create fallback database engine: {fallback_error}")
+        raise SystemExit("Database connection failed completely")
+
+# Add event listeners for monitoring
+add_database_event_listeners(engine)
+
+# Log database connection info
+if SQLALCHEMY_DATABASE_URL.startswith("postgresql"):
+    # Extract safe connection info for logging
+    safe_url = SQLALCHEMY_DATABASE_URL
+    if "@" in safe_url:
+        # Hide credentials in logs
+        parts = safe_url.split("@")
+        safe_url = f"***@{parts[1]}"
+    logger.info(f"Connected to PostgreSQL database: {safe_url}")
+    logger.info(f"Pool configuration: size={DEFAULT_POOL_SIZE}, max_overflow={DEFAULT_MAX_OVERFLOW}")
+else:
+    logger.info(f"Connected to database: {SQLALCHEMY_DATABASE_URL.split('://')[0]}://***")
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
@@ -122,5 +130,9 @@ def get_db():
     db = SessionLocal()
     try:
         yield db
+    except Exception as e:
+        logger.error(f"Database session error: {e}")
+        db.rollback()
+        raise
     finally:
         db.close()

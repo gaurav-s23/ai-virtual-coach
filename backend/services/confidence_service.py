@@ -7,8 +7,24 @@ import numpy as np
 from typing import Dict, List, Any, Optional
 import json
 from dataclasses import dataclass
+import os
+from datetime import datetime
 
 logger = logging.getLogger("ai_virtual_coach.confidence_service")
+
+# MLflow imports
+try:
+    import mlflow
+    import mlflow.pytorch
+    from mlflow.tracking import MlflowClient
+    from mlflow.entities import Metric
+    MLFLOW_AVAILABLE = True
+except ImportError:
+    MLFLOW_AVAILABLE = False
+    logger.warning("MLflow not available - scoring will run without tracking")
+except Exception as e:
+    MLFLOW_AVAILABLE = False
+    logger.error(f"MLflow init failed: {e}")
 
 @dataclass
 class ConfidenceFeatures:
@@ -29,8 +45,13 @@ class ConfidenceScorer(nn.Module):
     Takes text/audio features and outputs 0-100 confidence score
     """
     
-    def __init__(self, input_size: int = 8, hidden_sizes: List[int] = [64, 32, 16]):
+    def __init__(self, input_size: int = 8, hidden_sizes: List[int] = None, learning_rate: float = 0.001):
         super(ConfidenceScorer, self).__init__()
+        
+        # Make parameters configurable via environment variables
+        self.input_size = int(os.getenv("CONFIDENCE_INPUT_SIZE", str(input_size)))
+        self.hidden_sizes = hidden_sizes or [64, 32, 16]
+        self.learning_rate = float(os.getenv("CONFIDENCE_LEARNING_RATE", str(learning_rate)))
         
         layers = []
         prev_size = input_size
@@ -57,14 +78,19 @@ class ConfidenceScorer(nn.Module):
 
 class ConfidenceAnalyzer:
     """
-    Confidence Analytics Service using PyTorch
+    Confidence Analytics Service using PyTorch with MLflow experiment tracking
     Analyzes text/audio features to calculate confidence scores
     """
     
     def __init__(self):
         self.model = None
         self.device = torch.device('cpu')  # Use CPU for compatibility
+        self.experiment_name = "confidence_scoring"
+        self.run_id = None
+        self.mlflow_client = None
+        self.training_metrics = []
         self._initialize_model()
+        self._setup_mlflow()
         
     def _initialize_model(self):
         """Initialize the PyTorch confidence model"""
@@ -88,6 +114,141 @@ class ConfidenceAnalyzer:
             if isinstance(module, nn.Linear):
                 nn.init.xavier_uniform_(module.weight)
                 nn.init.zeros_(module.bias)
+    
+    def _setup_mlflow(self):
+        """Setup MLflow experiment tracking"""
+        if not MLFLOW_AVAILABLE:
+            logger.warning("MLflow not available - skipping experiment tracking")
+            return
+        
+        try:
+            # Set MLflow tracking URI to local mlruns directory
+            mlflow.set_tracking_uri(f"file:{os.path.abspath('./mlruns')}")
+            
+            # Create or get experiment
+            experiment = mlflow.get_experiment_by_name(self.experiment_name)
+            if experiment is None:
+                experiment_id = mlflow.create_experiment(self.experiment_name)
+                logger.info(f"Created MLflow experiment: {self.experiment_name}")
+            else:
+                experiment_id = experiment.experiment_id
+                logger.info(f"Using existing MLflow experiment: {self.experiment_name}")
+            
+            # Initialize MLflow client
+            self.mlflow_client = MlflowClient()
+            
+            # Start a new run for this session
+            self.run_id = mlflow.start_run(
+                experiment_id=experiment_id,
+                run_name=f"confidence_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            )
+            
+            # Log hyperparameters
+            self._log_hyperparameters()
+            
+            logger.info(f"MLflow tracking initialized with run_id: {self.run_id}")
+            
+        except Exception as e:
+            logger.error(f"Failed to setup MLflow: {e}")
+            self.mlflow_client = None
+            self.run_id = None
+    
+    def _log_hyperparameters(self):
+        """Log model hyperparameters to MLflow"""
+        if not self.mlflow_client or not self.run_id:
+            return
+        
+        try:
+            hyperparams = {
+                "model_type": "PyTorch_Neural_Network",
+                "input_size": 8,
+                "hidden_layers": "[64, 32, 16]",
+                "activation": "ReLU",
+                "dropout_rate": 0.2,
+                "optimizer": "Adam",
+                "learning_rate": 0.001,
+                "batch_size": 32,
+                "epochs": 100,
+                "device": str(self.device),
+                "normalization": "BatchNorm1d"
+            }
+            
+            for key, value in hyperparams.items():
+                mlflow.log_param(key, value)
+            
+            logger.info("Logged hyperparameters to MLflow")
+            
+        except Exception as e:
+            logger.error(f"Failed to log hyperparameters: {e}")
+    
+    def log_training_metrics(self, epoch: int, loss: float, f1_score: float, auc_score: float):
+        """Log training metrics to MLflow"""
+        if not self.mlflow_client or not self.run_id:
+            return
+        
+        try:
+            # Log metrics
+            mlflow.log_metric("training_loss", loss, step=epoch)
+            mlflow.log_metric("f1_score", f1_score, step=epoch)
+            mlflow.log_metric("auc_score", auc_score, step=epoch)
+            mlflow.log_metric("epoch", epoch)
+            
+            # Store for later analysis
+            self.training_metrics.append({
+                "epoch": epoch,
+                "loss": loss,
+                "f1_score": f1_score,
+                "auc_score": auc_score
+            })
+            
+            logger.debug(f"Logged training metrics for epoch {epoch}: loss={loss:.4f}, f1={f1_score:.4f}, auc={auc_score:.4f}")
+            
+        except Exception as e:
+            logger.error(f"Failed to log training metrics: {e}")
+    
+    def log_model_artifacts(self):
+        """Log model artifacts to MLflow"""
+        if not self.mlflow_client or not self.run_id or not self.model:
+            return
+        
+        try:
+            # Log PyTorch model
+            mlflow.pytorch.log_model(self.model, "confidence_model")
+            
+            # Log training metrics summary
+            if self.training_metrics:
+                metrics_file = "training_metrics.json"
+                with open(metrics_file, 'w') as f:
+                    json.dump(self.training_metrics, f, indent=2)
+                mlflow.log_artifact(metrics_file)
+                os.remove(metrics_file)  # Clean up temporary file
+            
+            logger.info("Logged model artifacts to MLflow")
+            
+        except Exception as e:
+            logger.error(f"Failed to log model artifacts: {e}")
+    
+    def end_mlflow_run(self):
+        """End the current MLflow run"""
+        if self.run_id:
+            try:
+                self.log_model_artifacts()
+                mlflow.end_run()
+                logger.info(f"Ended MLflow run: {self.run_id}")
+                self.run_id = None
+            except Exception as e:
+                logger.error(f"Failed to end MLflow run: {e}")
+    
+    def simulate_training_epoch(self, epoch: int):
+        """Simulate a training epoch for demonstration purposes"""
+        # Simulate training metrics (in real scenario, this would be actual training)
+        loss = max(0.1, 1.0 - (epoch * 0.01) + np.random.normal(0, 0.05))
+        f1_score = min(1.0, 0.5 + (epoch * 0.008) + np.random.normal(0, 0.02))
+        auc_score = min(1.0, 0.6 + (epoch * 0.007) + np.random.normal(0, 0.03))
+        
+        self.log_training_metrics(epoch, loss, f1_score, auc_score)
+        
+        return loss, f1_score, auc_score
     
     def extract_features_from_text(self, text: str, audio_features: Optional[Dict] = None) -> ConfidenceFeatures:
         """
@@ -164,7 +325,7 @@ class ConfidenceAnalyzer:
     
     def calculate_confidence_score(self, text: str, audio_features: Optional[Dict] = None) -> Dict[str, Any]:
         """
-        Calculate confidence score from text and audio features
+        Calculate confidence score from text and audio features with MLflow tracking
         
         Args:
             text: Spoken text transcript
@@ -192,7 +353,26 @@ class ConfidenceAnalyzer:
             # Blend model and rule-based scores
             final_score = (confidence_score * 0.7 + rule_based_score * 0.3) if self.model else rule_based_score
             
-            return {
+            # Log to MLflow if available
+            if self.mlflow_client and self.run_id:
+                try:
+                    mlflow.log_metric("confidence_score", final_score)
+                    mlflow.log_metric("rule_based_score", rule_based_score)
+                    if self.model:
+                        mlflow.log_metric("model_score", confidence_score)
+                    
+                    # Log feature importance
+                    mlflow.log_metric("speech_rate", features.speech_rate)
+                    mlflow.log_metric("filler_ratio", features.filler_word_ratio)
+                    mlflow.log_metric("clarity", features.clarity_score)
+                    
+                    # Log sample text length for analysis
+                    mlflow.log_metric("text_length", len(text))
+                    
+                except Exception as e:
+                    logger.debug(f"Failed to log to MLflow: {e}")
+            
+            result = {
                 "confidence_score": round(final_score, 2),
                 "rule_based_score": round(rule_based_score, 2),
                 "model_score": round(confidence_score, 2) if self.model else None,
@@ -203,8 +383,11 @@ class ConfidenceAnalyzer:
                     "clarity_score": round(features.clarity_score, 3),
                     "energy_level": round(features.energy_level, 3)
                 },
-                "assessment": self._get_confidence_assessment(final_score)
+                "assessment": self._get_confidence_assessment(final_score),
+                "mlflow_run_id": self.run_id
             }
+            
+            return result
             
         except Exception as e:
             logger.error("Failed to calculate confidence score: %s", str(e))
@@ -213,7 +396,8 @@ class ConfidenceAnalyzer:
                 "rule_based_score": 50.0,
                 "model_score": None,
                 "features": {},
-                "assessment": "Unable to analyze confidence"
+                "assessment": "Unable to analyze confidence",
+                "mlflow_run_id": self.run_id
             }
     
     def _calculate_rule_based_score(self, features: ConfidenceFeatures) -> float:

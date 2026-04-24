@@ -5,11 +5,10 @@ WORKDIR /app
 
 # Install dependencies first for better caching
 COPY package.json package-lock.json ./
-RUN npm ci --only=production && npm cache clean --force
+RUN npm ci --include=dev && npm cache clean --force
 
 # Development stage
 FROM base AS dev
-RUN npm ci
 COPY . .
 EXPOSE 5173
 CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]

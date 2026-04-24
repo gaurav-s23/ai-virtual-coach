@@ -72,6 +72,15 @@ async def analyze_vision_frame(
         VisionAnalysisResponse: Analysis results
     """
     try:
+        # Validate frame data size before processing
+        if not request.frame_data:
+            raise HTTPException(status_code=400, detail="Frame data is required")
+        
+        # Check base64 data size (limit to 10MB)
+        frame_data_size = len(request.frame_data.encode('utf-8'))
+        if frame_data_size > 10 * 1024 * 1024:  # 10MB limit
+            raise HTTPException(status_code=413, detail="Frame data too large (max 10MB)")
+        
         # Decode base64 frame
         try:
             # Remove data URL prefix if present
@@ -80,14 +89,28 @@ async def analyze_vision_frame(
             else:
                 frame_data = request.frame_data
             
-            # Decode base64 to numpy array
+            # Check decoded data size
             frame_bytes = base64.b64decode(frame_data)
+            if len(frame_bytes) > 5 * 1024 * 1024:  # 5MB limit for decoded image
+                raise HTTPException(status_code=413, detail="Decoded image too large (max 5MB)")
+            
+            # Decode to numpy array
             nparr = np.frombuffer(frame_bytes, np.uint8)
             frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
             
             if frame is None:
                 logger.warning("Failed to decode frame data")
                 raise HTTPException(status_code=400, detail="Invalid frame data")
+            
+            # Validate image dimensions
+            height, width = frame.shape[:2]
+            if height > 2160 or width > 3840:  # 4K limit
+                raise HTTPException(status_code=413, detail="Image resolution too high (max 4K)")
+            
+            # Check total pixels (prevent extremely large images)
+            total_pixels = height * width
+            if total_pixels > 8 * 1024 * 1024:  # 8MP limit
+                raise HTTPException(status_code=413, detail="Image has too many pixels (max 8MP)")
                 
         except Exception as e:
             logger.error(f"Frame decoding error: {str(e)}")

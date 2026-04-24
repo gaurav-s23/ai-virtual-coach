@@ -155,12 +155,18 @@ async def get_english_topic(_user=Depends(get_current_user)):
 
 @router.post("/english/questions", response_model=EnglishQuestionsResponse)
 async def get_english_questions_route(data: EnglishQuestionsRequest, _user=Depends(get_current_user)):
+    # Rate limit English questions generation to prevent abuse
+    enforce_rate_limit(key=f"english:{_user.id}", max_requests=10, window_seconds=60)
+    
     questions = await generate_english_questions(data.topic)
     return {"questions": questions}
 
 
 @router.post("/english/report", response_model=FinalReportResponse)
 async def english_report(data: EnglishReportRequest, _user=Depends(get_current_user)):
+    # Rate limit English report generation to prevent abuse
+    enforce_rate_limit(key=f"english_report:{_user.id}", max_requests=5, window_seconds=60)
+    
     result = await generate_final_report(data.history)
     if not isinstance(result, dict):
         raise HTTPException(status_code=500, detail="Server error, try again")

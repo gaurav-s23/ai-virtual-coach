@@ -89,7 +89,61 @@ def _cache_key_with_user(prefix: str, user_id: int, *values: str) -> str:
     return ":".join(key_parts)
 
 
+async def _redis_get(key: str) -> Any | None:
+    """Get value from Redis cache with performance monitoring"""
+    if not _REDIS:
+        return None
+    
+    start_time = time.perf_counter()
+    try:
+        cached_data = await _REDIS.get(key)
+        if cached_data:
+            try:
+                value = json.loads(cached_data)
+                latency = (time.perf_counter() - start_time) * 1000
+                logger.debug(f"Redis cache HIT for key: {key[:50]}... (latency: {latency:.2f}ms)")
+                return value
+            except json.JSONDecodeError:
+                logger.warning(f"Invalid JSON in Redis cache for key: {key[:50]}...")
+                await _REDIS.delete(key)
+                return None
+        else:
+            latency = (time.perf_counter() - start_time) * 1000
+            logger.debug(f"Redis cache MISS for key: {key[:50]}... (latency: {latency:.2f}ms)")
+            return None
+    except Exception as e:
+        latency = (time.perf_counter() - start_time) * 1000
+        logger.error(f"Redis GET error for key {key[:50]}... (latency: {latency:.2f}ms): {e}")
+        return None
+
+
+async def _redis_set(key: str, value: Any, ttl: int = None) -> bool:
+    """Set value in Redis cache with TTL and performance monitoring"""
+    if not _REDIS:
+        return False
+    
+    start_time = time.perf_counter()
+    try:
+        cache_ttl = ttl or settings.llm_cache_ttl_s
+        serialized_value = json.dumps(value, default=str)
+        
+        success = await _REDIS.setex(key, cache_ttl, serialized_value)
+        latency = (time.perf_counter() - start_time) * 1000
+        
+        if success:
+            logger.debug(f"Redis cache SET for key: {key[:50]}... (TTL: {cache_ttl}s, latency: {latency:.2f}ms)")
+        else:
+            logger.error(f"Redis cache SET failed for key: {key[:50]}... (latency: {latency:.2f}ms)")
+        
+        return success
+    except Exception as e:
+        latency = (time.perf_counter() - start_time) * 1000
+        logger.error(f"Redis SET error for key {key[:50]}... (latency: {latency:.2f}ms): {e}")
+        return False
+
+
 def _cache_get(key: str) -> Any | None:
+    """Get value from in-memory cache (fallback)"""
     item = _CACHE.get(key)
     if not item:
         return None
@@ -101,7 +155,28 @@ def _cache_get(key: str) -> Any | None:
 
 
 def _cache_set(key: str, value: Any) -> None:
+    """Set value in in-memory cache (fallback)"""
     _CACHE[key] = (time.time() + settings.llm_cache_ttl_s, value)
+
+
+async def _cache_get_async(key: str) -> Any | None:
+    """Async cache get that tries Redis first, then falls back to memory cache"""
+    # Try Redis first
+    redis_value = await _redis_get(key)
+    if redis_value is not None:
+        return redis_value
+    
+    # Fallback to memory cache
+    return _cache_get(key)
+
+
+async def _cache_set_async(key: str, value: Any, ttl: int = None) -> None:
+    """Async cache set that tries Redis first, then falls back to memory cache"""
+    # Try Redis first
+    redis_success = await _redis_set(key, value, ttl)
+    if not redis_success:
+        # Fallback to memory cache
+        _cache_set(key, value)
 
 
 def _db_cache_get(key: str, schema: type[BaseModel]) -> BaseModel | None:
@@ -143,9 +218,11 @@ def _db_cache_set(key: str, value: BaseModel) -> None:
         db.close()
 
 
-async def _llm_json_call(*, cache_key: str, prompt: str, schema: type[BaseModel], fallback: BaseModel) -> BaseModel:
-    cached = _cache_get(cache_key)
+async def _llm_json_call(*, cache_key: str, prompt: str, schema: type[BaseModel], fallback: BaseModel, user_id: int = None) -> BaseModel:
+    # Try Redis cache first, then fallback to memory cache
+    cached = await _cache_get_async(cache_key)
     if cached is None:
+        # Fallback to database cache
         db_cached = _db_cache_get(cache_key, schema)
         if db_cached is not None:
             _cache_set(cache_key, db_cached)
@@ -167,10 +244,8 @@ async def _llm_json_call(*, cache_key: str, prompt: str, schema: type[BaseModel]
     if cached is not None:
         return cached
 
-    adapter = TypeAdapter(schema)
-    attempts = max(1, settings.llm_retry_count + 1)
-    last_error: Exception | None = None
-    for attempt in range(attempts):
+    # Cache miss - generate new response
+    for attempt in range(2):
         try:
             response = await complete_with_fallback(
                 prompt=prompt,
@@ -180,21 +255,14 @@ async def _llm_json_call(*, cache_key: str, prompt: str, schema: type[BaseModel]
                 temperature=settings.llm_temperature,
                 top_p=settings.llm_top_p,
             )
-            text = (response.text if response else "").strip()
-            data = json.loads(text)
-            parsed = adapter.validate_python(data)
+            parsed = schema.model_validate_json(response.text if response else "")
+
+            # Cache in all layers: Redis, memory, and database
+            await _cache_set_async(cache_key, parsed)
             _cache_set(cache_key, parsed)
             _db_cache_set(cache_key, parsed)
-            if _REDIS is not None:
-                try:
-                    await _REDIS.setex(cache_key, settings.llm_cache_ttl_s, parsed.model_dump_json())
-                except Exception:
-                    logger.warning("redis_cache_set_failed cache_key=%s", cache_key)
+
             return parsed
-        except (json.JSONDecodeError, ValidationError, ValueError, TypeError) as exc:
-            last_error = exc
-        except Exception as exc:  # network/provider errors
-            last_error = exc
         if attempt < attempts - 1:
             await asyncio.sleep(0.6 * (attempt + 1))
 
@@ -388,6 +456,65 @@ async def generate_final_report(history: list) -> dict:
         fallback=fallback,
     )
     return result.model_dump()
+
+
+async def get_cache_performance_stats() -> Dict[str, Any]:
+    """Get Redis cache performance statistics"""
+    if not _REDIS:
+        return {
+            "redis_available": False,
+            "cache_stats": "Redis not available - using memory cache only"
+        }
+    
+    try:
+        info = await _REDIS.info()
+        stats = {
+            "redis_available": True,
+            "connected_clients": info.get("connected_clients", 0),
+            "used_memory": info.get("used_memory_human", "N/A"),
+            "keyspace_hits": info.get("keyspace_hits", 0),
+            "keyspace_misses": info.get("keyspace_misses", 0),
+            "total_commands_processed": info.get("total_commands_processed", 0),
+            "uptime_in_seconds": info.get("uptime_in_seconds", 0),
+            "hit_rate": 0.0
+        }
+        
+        # Calculate hit rate
+        hits = stats["keyspace_hits"]
+        misses = stats["keyspace_misses"]
+        total = hits + misses
+        if total > 0:
+            stats["hit_rate"] = round((hits / total) * 100, 2)
+        
+        return stats
+    except Exception as e:
+        logger.error(f"Failed to get Redis stats: {e}")
+        return {
+            "redis_available": True,
+            "cache_stats": f"Error retrieving stats: {e}"
+        }
+
+
+async def clear_user_cache(user_id: int) -> bool:
+    """Clear all cache entries for a specific user"""
+    if not _REDIS:
+        return False
+    
+    try:
+        # Get all keys matching the user pattern
+        pattern = f"*:{user_id}:*"
+        keys = await _REDIS.keys(pattern)
+        
+        if keys:
+            deleted = await _REDIS.delete(*keys)
+            logger.info(f"Cleared {deleted} cache entries for user {user_id}")
+            return True
+        else:
+            logger.info(f"No cache entries found for user {user_id}")
+            return True
+    except Exception as e:
+        logger.error(f"Failed to clear cache for user {user_id}: {e}")
+        return False
 
 
 async def generate_chat_feedback(question: str, answer: str, context: str) -> tuple[str, int]:

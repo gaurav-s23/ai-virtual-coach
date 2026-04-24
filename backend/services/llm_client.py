@@ -33,6 +33,10 @@ class LLMClient:
         self.openrouter_key = os.getenv("OPENROUTER_API_KEY")
         self.hf_token = os.getenv("HF_TOKEN")
         
+        # Configurable timeout settings
+        self.default_timeout = int(os.getenv("LLM_DEFAULT_TIMEOUT", "60"))
+        self.max_timeout = int(os.getenv("LLM_MAX_TIMEOUT", "120"))
+        
         # Configure litellm
         litellm.set_verbose = "DEBUG"
         litellm.drop_params = True
@@ -175,17 +179,30 @@ class LLMClient:
                     "messages": messages,
                     "temperature": temperature,
                     "stream": stream,
-                    "timeout": 60,  # 60 second timeout
+                    "timeout": min(self.default_timeout, self.max_timeout),  # Use configurable timeout
                     **kwargs
                 }
                 
                 if max_tokens:
                     request_params["max_tokens"] = max_tokens
                 
-                # Add API key based on provider
+                # Add API key based on provider with validation
                 if provider == LLMProvider.GEMINI:
+                    if not self.gemini_key:
+                        logger.error("Gemini API key not configured")
+                        raise ValueError("Gemini API key not available")
                     request_params["api_key"] = self.gemini_key
                 else:
+                    # Validate OpenRouter API key before fallback
+                    if not self.openrouter_key:
+                        logger.error("OpenRouter API key not configured for fallback")
+                        raise ValueError("OpenRouter API key not available for fallback")
+                    
+                    # Basic OpenRouter API key validation
+                    if len(self.openrouter_key) < 20 or not self.openrouter_key.startswith('sk-or-v1'):
+                        logger.error("Invalid OpenRouter API key format")
+                        raise ValueError("Invalid OpenRouter API key format")
+                    
                     request_params["api_key"] = self.openrouter_key
                 
                 logger.info(f"Making request to {provider.value} with model {model}")

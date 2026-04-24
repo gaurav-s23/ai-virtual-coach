@@ -50,3 +50,11 @@ langchain-litellm==0.6.4
 redis==6.4.0
 transformers>=4.35.0
 websockets>=11.0
+
+# RAGAS Evaluation Framework
+ragas==0.1.7
+datasets>=2.18.0
+
+# MLflow Experiment Tracking
+mlflow==2.8.1
+mlflow-skinny==2.8.1  # Lightweight MLflow without heavy dependencies

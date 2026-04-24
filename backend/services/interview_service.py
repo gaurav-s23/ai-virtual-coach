@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import gzip
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -18,6 +20,41 @@ except ImportError as e:
     except ImportError as fallback_error:
         logger.error(f"Fallback import error in interview_service.py: {fallback_error}")
         raise SystemExit(f"Failed to import required modules in interview_service.py: {fallback_error}")
+
+
+def compress_transcript(transcript_data: list) -> str:
+    """Compress transcript data using gzip and base64 encoding for storage"""
+    try:
+        # Convert to JSON string
+        json_str = json.dumps(transcript_data, separators=(',', ':'))
+        # Compress with gzip
+        compressed = gzip.compress(json_str.encode('utf-8'))
+        # Encode as base64 for storage in database
+        import base64
+        return base64.b64encode(compressed).decode('utf-8')
+    except Exception as e:
+        logger.error(f"Failed to compress transcript: {e}")
+        # Fallback to uncompressed JSON
+        return json.dumps(transcript_data)
+
+
+def decompress_transcript(compressed_data: str) -> list:
+    """Decompress transcript data from base64-encoded gzip"""
+    try:
+        import base64
+        # Decode from base64
+        compressed = base64.b64decode(compressed_data.encode('utf-8'))
+        # Decompress with gzip
+        json_str = gzip.decompress(compressed).decode('utf-8')
+        # Parse JSON
+        return json.loads(json_str)
+    except Exception as e:
+        logger.error(f"Failed to decompress transcript: {e}")
+        # Fallback: try to parse as regular JSON
+        try:
+            return json.loads(compressed_data)
+        except:
+            return []
 
 
 def build_welcome_message(name: str) -> str:
@@ -45,7 +82,7 @@ def create_interview_session(
         status="starting",
         current_question=0,
         resume_context=resume_context[:2000],
-        transcript=[],
+        transcript=compress_transcript([]),
         had_pivot=True,
     )
     db.add(interview)
@@ -56,10 +93,19 @@ def create_interview_session(
 
 def append_transcript_turn(db: Session, interview: "models.Interview", user_answer: str, assistant_reply: str) -> None:
     now = datetime.now(timezone.utc).isoformat()
-    transcript = interview.transcript or []
+    
+    # Decompress existing transcript
+    if isinstance(interview.transcript, str):
+        transcript = decompress_transcript(interview.transcript)
+    else:
+        transcript = interview.transcript or []
+    
+    # Add new turns
     transcript.append({"role": "user", "content": user_answer, "timestamp": now})
     transcript.append({"role": "assistant", "content": assistant_reply, "timestamp": now})
-    interview.transcript = transcript
+    
+    # Compress and store
+    interview.transcript = compress_transcript(transcript)
     interview.current_question = int(interview.current_question or 0) + 1
     interview.status = "in_progress"
     db.add(interview)

@@ -7,6 +7,8 @@ from dataclasses import dataclass
 
 import PyPDF2
 
+logger = logging.getLogger("ai_virtual_coach.services.rag")
+
 try:
     import models
     from database import SessionLocal
@@ -22,7 +24,6 @@ except ImportError as e:
         logger.error(f"Fallback import error in rag_service.py: {fallback_error}")
         raise SystemExit(f"Failed to import required modules in rag_service.py: {fallback_error}")
 
-logger = logging.getLogger("ai_virtual_coach.services.rag")
 _QUEUE: asyncio.Queue["EmbeddingTask"] | None = None
 _WORKER_STARTED = False
 
@@ -137,8 +138,7 @@ def extract_resume_brief(file_bytes: bytes) -> str:
     if len(text) < 50:
         raise ValueError("PDF contains too little text to be useful.")
     
-    return text
-
+    # Resume parsing logic - now reachable
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     name = lines[0][:120] if lines else "Candidate"
     skills = []
@@ -153,6 +153,7 @@ def extract_resume_brief(file_bytes: bytes) -> str:
         if "project" in lower and len(project) < 3:
             project.append(line)
     exp_or_project = experience[:3] if experience else project[:3]
+    
     return f"Name: {name}\nSkills: {' | '.join(skills[:6])}\nExperience: {' | '.join(exp_or_project)}"
 
 

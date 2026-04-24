@@ -29,7 +29,10 @@ RUN groupadd -r appuser && useradd -r -g appuser appuser
 # Copy and install Python dependencies
 COPY requirements.txt /app/requirements.txt
 RUN python -m pip install --no-cache-dir --upgrade pip setuptools wheel \
- && python -m pip install --no-cache-dir --prefer-binary -r /app/requirements.txt
+    && python -m pip install --no-cache-dir --prefer-binary -r /app/requirements.txt \
+    && pip cache purge \
+    && find /usr/local/lib/python3.11/site-packages -name "*.pyc" -delete \
+    && find /usr/local/lib/python3.11/site-packages -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 
 # Copy application code
 COPY . /app

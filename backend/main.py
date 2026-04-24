@@ -59,7 +59,7 @@ except ImportError as e:
     try:
         from core.config import get_settings
         from database import engine
-        from auth.security import _jwt_secret, decode_access_token
+        from auth.security import decode_access_token
         from services.rag_service import start_rag_workers
         from services.scoring_service import warmup_scorer
         from routes.auth import router as auth_router
@@ -76,7 +76,7 @@ except ImportError as e:
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name, version=settings.app_version)
-_DEBUG_LOG_PATH = "debug-196b20.log"
+_DEBUG_LOG_PATH = os.getenv("DEBUG_LOG_PATH", "debug-196b20.log")
 
 
 def _debug_log(*, run_id: str, hypothesis_id: str, location: str, message: str, data: dict) -> None:
@@ -92,27 +92,46 @@ def _debug_log(*, run_id: str, hypothesis_id: str, location: str, message: str, 
     with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
         f.write(json.dumps(payload, ensure_ascii=True) + "\n")
 
+
 _cors_raw = os.getenv("CORS_ORIGINS", "")
-# Enhanced CORS origins for local development
-origins = [o.strip() for o in _cors_raw.split(",") if o.strip()] or [
-    "http://localhost:5173",    # Vite default
-    "http://localhost:3000",    # Create React App default
-    "http://127.0.0.1:5173",   # Alternative localhost
-    "http://127.0.0.1:3000",   # Alternative localhost
-    "http://0.0.0.0:5173",     # Network access
-    "http://0.0.0.0:3000",     # Network access
-    "http://localhost:8080",   # Alternative dev port
-    "http://127.0.0.1:8080",   # Alternative dev port
-]
-if settings.frontend_url:
-    origins.append(settings.frontend_url)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
-)
+# Environment-specific CORS configuration
+is_production = os.getenv("ENVIRONMENT", "development").lower() == "production"
+
+if is_production:
+    # Production: Only allow configured frontend URL
+    origins = []
+    if settings.frontend_url:
+        origins.append(settings.frontend_url)
+    else:
+        # In production, require explicit frontend URL
+        logger.warning("Production mode: FRONTEND_URL not configured, CORS will be disabled")
+        origins = []
+else:
+    # Development: Allow localhost origins
+    origins = [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
+        "http://localhost:8080",   # Alternative dev port
+        "http://127.0.0.1:8080",   # Alternative dev port
+    ]
+    if settings.frontend_url:
+        origins.append(settings.frontend_url)
+
+# Only add CORS middleware if we have valid origins
+if origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["*"],
+        max_age=86400,  # Cache preflight requests for 24 hours
+    )
+    logger.info(f"CORS configured for origins: {origins}")
+else:
+    logger.warning("CORS middleware not added - no valid origins configured")
 
 
 @app.middleware("http")
@@ -235,7 +254,7 @@ def _verify_db_on_startup() -> None:
     # Check database connectivity
     try:
         with engine.connect() as conn:
-            conn.exec_driver_sql("SELECT 1")
+            result = conn.execute(text("SELECT 1"))
         logger.info("✓ Database connectivity check passed")
     except Exception as exc:
         logger.error(f"✗ Database connectivity check failed: {exc}")
@@ -256,6 +275,47 @@ def _verify_db_on_startup() -> None:
         logger.error(f"✗ Failed to start background services: {exc}")
         raise SystemExit(f"Background services failed to start: {exc}")
     
+    # Initialize admin user if not exists (idempotent operation)
+    try:
+        from database import SessionLocal
+        import models
+        from auth.security import hash_password
+        from datetime import datetime, timezone
+        
+        db = SessionLocal()
+        try:
+            # Check if admin user already exists
+            existing_admin = db.query(models.User).filter(models.User.email == settings.admin_email).first()
+            
+            if not existing_admin:
+                # Create admin user with proper validation
+                admin_user = models.User(
+                    email=settings.admin_email,
+                    password=hash_password(settings.admin_password),
+                    name="System Administrator",
+                    readiness_score=100,
+                    total_interviews=0,
+                    total_mocks=0,
+                    total_english_sessions=0,
+                    streak_count=0,
+                    created_at=datetime.now(timezone.utc)
+                )
+                
+                db.add(admin_user)
+                db.commit()
+                db.refresh(admin_user)
+                logger.info(f"✓ Admin user created: {settings.admin_email}")
+            else:
+                logger.info(f"✓ Admin user already exists: {settings.admin_email}")
+                
+        finally:
+            db.close()
+            
+    except Exception as e:
+        logger.error(f"✗ Failed to initialize admin user: {e}")
+        # Don't fail startup for admin user initialization, just log the error
+        logger.warning("Application will continue without admin user initialization")
+    
     logger.info("✓ All startup checks passed successfully")
     logger.info(f"Application '{settings.app_name}' v{settings.app_version} is ready")
 
@@ -269,8 +329,46 @@ app.include_router(proctor_router)
 app.include_router(vision_router)
 app.include_router(english_router)
 
-_ws_connections: dict = {}
+from collections import defaultdict
 
+_ws_connections: dict = {}
+ws_message_counts = defaultdict(int)
+ws_last_reset = time.time()
+
+async def cleanup_abandoned_session(session_id: str):
+    """Clean up abandoned interview sessions"""
+    try:
+        from database import SessionLocal
+        import models
+        from datetime import datetime, timezone
+        
+        db = SessionLocal()
+        try:
+            # Update session status to abandoned
+            session = db.query(models.Interview).filter(
+                models.Interview.session_id == session_id
+            ).first()
+            
+            if session and session.status != "completed":
+                session.status = "abandoned"
+                session.updated_at = datetime.now(timezone.utc)
+                db.commit()
+                logger.info(f"Marked session {session_id} as abandoned")
+                
+                # Clean up any temporary data associated with the session
+                # This could include temporary files, cache entries, etc.
+                import os
+                temp_dir = f"/tmp/interview_{session_id}"
+                if os.path.exists(temp_dir):
+                    import shutil
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                    logger.info(f"Cleaned up temporary directory for session {session_id}")
+                    
+        finally:
+            db.close()
+            
+    except Exception as e:
+        logger.error(f"Failed to cleanup abandoned session {session_id}: {e}")
 
 @app.websocket("/ws/interview/{session_id}")
 async def interview_ws(websocket: WebSocket, session_id: str):
@@ -287,7 +385,7 @@ async def interview_ws(websocket: WebSocket, session_id: str):
             origin_host = origin
     
     # Check if origin is allowed (same logic as HTTP CORS)
-    allowed_origins = origins + ["*"]  # Allow same-origin and any explicitly configured
+    allowed_origins = origins  # Remove wildcard for security
     
     is_allowed = False
     for allowed_origin in allowed_origins:
@@ -325,7 +423,8 @@ async def interview_ws(websocket: WebSocket, session_id: str):
         await websocket.close(code=1008)
         return
     try:
-        decode_access_token(token)
+        payload = decode_access_token(token)
+        user_id = int(payload.get("sub"))
     except (JWTError, ValueError):
         # region agent log
         _debug_log(
@@ -338,6 +437,33 @@ async def interview_ws(websocket: WebSocket, session_id: str):
         # endregion
         await websocket.close(code=1008)
         return
+    
+    # Validate session ownership - user can only access their own sessions
+    try:
+        from database import SessionLocal
+        import models
+        
+        db = SessionLocal()
+        try:
+            # Check if session exists and belongs to this user
+            session = db.query(models.Interview).filter(
+                models.Interview.session_id == session_id,
+                models.Interview.user_id == user_id
+            ).first()
+            
+            if not session:
+                logger.warning(f"WebSocket access denied: User {user_id} trying to access session {session_id}")
+                await websocket.close(code=1008, reason="Session not found or access denied")
+                return
+                
+        finally:
+            db.close()
+            
+    except Exception as e:
+        logger.error(f"Session ownership validation failed: {e}")
+        await websocket.close(code=1008, reason="Session validation failed")
+        return
+    
     # region agent log
     _debug_log(
         run_id="pre-fix",
@@ -351,12 +477,31 @@ async def interview_ws(websocket: WebSocket, session_id: str):
     _ws_connections[session_id] = websocket
     try:
         while True:
+            # Rate limiting check
+            if time.time() - ws_last_reset > 60:  # Reset every minute
+                ws_message_counts.clear()
+                ws_last_reset = time.time()
+
+            if ws_message_counts[session_id] > 100:  # 100 messages per minute limit
+                await websocket.close(code=1008, reason="Rate limit exceeded")
+                return
+
             data = await websocket.receive_text()
+            # Validate and sanitize data
+            if len(data) > 10000:  # Prevent large payloads
+                await websocket.close(code=1008, reason="Payload too large")
+                return
+            
+            ws_message_counts[session_id] += 1
             await websocket.send_text(data)
     except WebSocketDisconnect:
+        # Clean up abandoned session
         _ws_connections.pop(session_id, None)
+        await cleanup_abandoned_session(session_id)
     except Exception:
+        # Clean up abandoned session on error
         _ws_connections.pop(session_id, None)
+        await cleanup_abandoned_session(session_id)
 
 
 @app.get("/health")
@@ -365,7 +510,6 @@ async def health_check():
     Comprehensive health check endpoint that tests all critical dependencies.
     Returns detailed status of database, ChromaDB, and system health.
     """
-    import asyncio
     from datetime import datetime, timezone
     
     health_status = {
@@ -393,20 +537,37 @@ async def health_check():
         }
         health_status["status"] = "unhealthy"
     
-    # ChromaDB connectivity check
+    # ChromaDB connectivity check with timeout
     try:
+        import asyncio
         from rag.store import get_embeddings
-        # Test embedding model loading
-        embeddings = get_embeddings()
-        # Test basic embedding functionality
-        test_embedding = embeddings.embed_query("health check test")
-        if test_embedding and len(test_embedding) > 0:
-            health_status["checks"]["chromadb"] = {
-                "status": "healthy",
-                "message": f"ChromaDB and embeddings working (dimensions: {len(test_embedding)})"
-            }
-        else:
-            raise Exception("Embedding model returned empty result")
+        
+        # Add timeout for ChromaDB operations
+        async def test_chromadb_with_timeout():
+            try:
+                # Test embedding model loading with timeout
+                embeddings = get_embeddings()
+                # Test basic embedding functionality
+                test_embedding = embeddings.embed_query("health check test")
+                if test_embedding and len(test_embedding) > 0:
+                    return {
+                        "status": "healthy",
+                        "message": f"ChromaDB and embeddings working (dimensions: {len(test_embedding)})"
+                    }
+                else:
+                    raise Exception("Embedding model returned empty result")
+            except Exception as e:
+                raise e
+        
+        # Run with 30 second timeout
+        result = asyncio.run(asyncio.wait_for(test_chromadb_with_timeout(), timeout=30.0))
+        health_status["checks"]["chromadb"] = result
+    except asyncio.TimeoutError:
+        health_status["checks"]["chromadb"] = {
+            "status": "warning",
+            "message": "ChromaDB connection timeout - service may be starting up"
+        }
+        # Don't set overall status to unhealthy for timeout
     except Exception as e:
         health_status["checks"]["chromadb"] = {
             "status": "unhealthy",
@@ -445,7 +606,9 @@ async def health_check():
     try:
         import psutil
         memory = psutil.virtual_memory()
-        disk = psutil.disk_usage('/')
+        import platform
+        disk_path = '/' if platform.system() != 'Windows' else 'C:\\\\'
+        disk = psutil.disk_usage(disk_path)
         
         health_status["checks"]["system"] = {
             "status": "healthy",

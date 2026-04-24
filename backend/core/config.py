@@ -4,7 +4,8 @@ import os
 import logging
 from functools import lru_cache
 from typing import Optional
-from pydantic import BaseSettings, Field, validator, root_validator
+from pydantic_settings import BaseSettings
+from pydantic import Field, validator, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,12 @@ class Settings(BaseSettings):
     # Google API settings
     google_api_key: str = Field(default="", env="GOOGLE_API_KEY")
     
+    @validator('google_api_key')
+    def validate_google_api_key(cls, v):
+        if not v:
+            raise ValueError('GOOGLE_API_KEY is required for Gemini API access')
+        return v
+    
     # ChromaDB settings
     chroma_dir: str = Field(default="./.chroma", env="CHROMA_DIR")
     
@@ -70,8 +77,29 @@ class Settings(BaseSettings):
     def validate_admin_password(cls, v):
         if not v:
             raise ValueError('ADMIN_PASSWORD is required')
-        if len(v) < 8:
-            raise ValueError('ADMIN_PASSWORD must be at least 8 characters long')
+        if len(v) < 12:
+            raise ValueError('ADMIN_PASSWORD must be at least 12 characters long')
+        
+        # Check for password complexity
+        has_upper = any(c.isupper() for c in v)
+        has_lower = any(c.islower() for c in v)
+        has_digit = any(c.isdigit() for c in v)
+        has_special = any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in v)
+        
+        if not (has_upper and has_lower and has_digit and has_special):
+            raise ValueError(
+                'ADMIN_PASSWORD must contain at least one uppercase letter, '
+                'one lowercase letter, one digit, and one special character'
+            )
+        
+        # Check for common weak passwords
+        weak_passwords = [
+            'password', '123456', 'qwerty', 'admin', 'letmein',
+            'welcome', 'monkey', 'dragon', 'master', 'sunshine'
+        ]
+        if v.lower() in weak_passwords:
+            raise ValueError('ADMIN_PASSWORD is too common and weak. Please choose a stronger password.')
+        
         return v
     
     @validator('jwt_secret_key')
@@ -84,7 +112,7 @@ class Settings(BaseSettings):
     
     @validator('database_url')
     def validate_database_url(cls, v):
-        if v and not v.startswith(("sqlite://", "postgresql://", "mysql://")):
+        if v and not v.startswith(("sqlite://", "postgresql://", "postgresql+psycopg2://", "mysql://")):
             raise ValueError(f'Invalid DATABASE_URL format: {v}')
         return v
     
@@ -118,7 +146,7 @@ class Settings(BaseSettings):
             raise ValueError('LLM_CACHE_TTL_SECONDS must be non-negative')
         return v
     
-    @root_validator
+    @model_validator(mode='after')
     def validate_all_settings(cls, values):
         logger.info("Configuration validation passed")
         return values
@@ -129,9 +157,6 @@ def get_settings() -> Settings:
     """Get and validate application settings."""
     try:
         return Settings()
-    except ConfigurationError as e:
-        logger.critical(f"Application configuration error: {e}")
-        raise
     except Exception as e:
-        logger.critical(f"Unexpected configuration error: {e}")
+        logger.critical(f"Application configuration error: {e}")
         raise ConfigurationError(f"Failed to load configuration: {e}")
